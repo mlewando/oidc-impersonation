@@ -1,0 +1,13 @@
+# Immich system config for the e2e stack: OAuth through the Bridge.
+machineLearning:
+  enabled: false
+oauth:
+  enabled: true
+  issuerUrl: https://id.e2e.test:8443
+  clientId: immich
+  clientSecret: e2e-immich-client-secret
+  scope: openid email profile
+  signingAlgorithm: RS256
+  tokenEndpointAuthMethod: client_secret_post
+  autoRegister: true
+  buttonText: Login with OAuth

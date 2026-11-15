@@ -1,0 +1,10 @@
+# TLS in front of Immich, so every hop of the e2e stack is HTTPS (README: "Use HTTPS on every hop").
+{
+	admin off
+	auto_https off
+}
+
+https://photos.e2e.test {
+	tls /certs/photos.e2e.test.chain.crt /certs/photos.e2e.test.key
+	reverse_proxy immich:2283
+}

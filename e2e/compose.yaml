@@ -1,0 +1,124 @@
+# E2e stack: Authelia (Upstream provider) ⇄ Bridge ⇄ Immich (Client app), driven by Playwright.
+# Run it with `pnpm e2e` from the repo root. Everything here is throwaway test material.
+name: oidc-impersonation-e2e
+
+x-certs: &certs-volume
+  type: volume
+  source: certs
+  target: /certs
+  read_only: true
+
+services:
+  certs:
+    image: alpine:3.22
+    command: sh /generate.sh
+    volumes:
+      - ./certs/generate.sh:/generate.sh:ro
+      - certs:/out
+
+  authelia:
+    image: authelia/authelia:4.39.28
+    environment:
+      X_AUTHELIA_CONFIG_FILTERS: template
+    volumes:
+      - ./authelia:/config:ro
+      - *certs-volume
+    tmpfs:
+      - /data
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases: [auth.e2e.test]
+
+  bridge:
+    build:
+      context: ..
+    environment:
+      CONFIG_FILE: /config/config.yaml
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - ./bridge:/config:ro
+      - *certs-volume
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      authelia:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [id.e2e.test]
+
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+    tmpfs:
+      - /var/lib/postgresql/data
+    shm_size: 128mb
+
+  redis:
+    image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+      interval: 2s
+
+  immich:
+    image: ghcr.io/immich-app/immich-server:v3.4.1
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /config/${IMMICH_OAUTH:-bridge}.yaml
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - ./immich:/config:ro
+      - *certs-volume
+    tmpfs:
+      - /data
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      database:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  photos:
+    image: caddy:2.10-alpine
+    volumes:
+      - ./photos/Caddyfile:/etc/caddy/Caddyfile:ro
+      - *certs-volume
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      immich:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [photos.e2e.test]
+
+  e2e:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    environment:
+      CI: '1'
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - ./results:/e2e/results
+      - *certs-volume
+    depends_on:
+      photos:
+        condition: service_started
+      bridge:
+        condition: service_started
+    profiles: [test]
+
+volumes:
+  certs:

@@ -1,0 +1,7 @@
+.git
+.scratch
+.config
+.envrc
+HANDOFF.md
+node_modules
+e2e/results

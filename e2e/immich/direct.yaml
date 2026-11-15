@@ -1,0 +1,14 @@
+# Immich system config for the e2e stack: OAuth straight to Authelia, no Bridge.
+# Used to compare the `sub` Immich gets with and without the Bridge.
+machineLearning:
+  enabled: false
+oauth:
+  enabled: true
+  issuerUrl: https://auth.e2e.test:9091
+  clientId: immich-direct
+  clientSecret: e2e-immich-direct-client-secret
+  scope: openid email profile
+  signingAlgorithm: RS256
+  tokenEndpointAuthMethod: client_secret_post
+  autoRegister: true
+  buttonText: Login with OAuth

@@ -1,0 +1,76 @@
+# Authelia for the e2e stack only. Test secrets, one_factor, SQLite. Never reuse in production.
+theme: light
+
+server:
+  address: tcp://:9091
+  tls:
+    certificate: /certs/auth.e2e.test.chain.crt
+    key: /certs/auth.e2e.test.key
+
+log:
+  level: info
+
+identity_validation:
+  reset_password:
+    jwt_secret: e2e-reset-password-jwt-secret-0123456789abcdef
+
+authentication_backend:
+  file:
+    path: /config/users.yml
+    watch: false
+
+access_control:
+  default_policy: one_factor
+
+session:
+  secret: e2e-session-secret-0123456789abcdef0123456789
+  cookies:
+    - domain: e2e.test
+      authelia_url: https://auth.e2e.test:9091
+
+regulation:
+  max_retries: 0
+
+storage:
+  encryption_key: e2e-storage-encryption-key-0123456789abcdef
+  local:
+    path: /data/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /data/notification.txt
+
+identity_providers:
+  oidc:
+    hmac_secret: e2e-oidc-hmac-secret-0123456789abcdef0123456789
+    jwks:
+      - key: {{ secret "/certs/authelia-oidc-key.pem" | mindent 10 "|" | msquote }}
+    clients:
+      # The Bridge, as in the README example.
+      - client_id: oidc-impersonation
+        client_name: oidc-impersonation
+        client_secret: '$plaintext$e2e-upstream-client-secret'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - https://id.e2e.test:8443/callback
+        scopes: [openid, profile, email, groups]
+        grant_types: [authorization_code]
+        response_types: [code]
+        token_endpoint_auth_method: client_secret_basic
+      # Immich talking to Authelia directly, to compare `sub` with the Bridge path.
+      - client_id: immich-direct
+        client_name: immich-direct
+        client_secret: '$plaintext$e2e-immich-direct-client-secret'
+        public: false
+        authorization_policy: one_factor
+        consent_mode: implicit
+        redirect_uris:
+          - https://photos.e2e.test/auth/login
+        scopes: [openid, profile, email]
+        grant_types: [authorization_code]
+        response_types: [code]
+        token_endpoint_auth_method: client_secret_post

@@ -1,0 +1,29 @@
+# Bridge config for the e2e stack. Secrets are test-only.
+issuer: https://id.e2e.test:8443
+port: 8443
+tls:
+  cert_file: /certs/id.e2e.test.chain.crt
+  key_file: /certs/id.e2e.test.key
+
+signing_key_file: /certs/bridge-signing-key.pem
+cookie_secret_file: /config/secrets/cookie-secret
+
+upstream:
+  issuer: https://auth.e2e.test:9091
+  client_id: oidc-impersonation
+  client_secret_file: /config/secrets/upstream-client-secret
+  scopes: [openid, profile, email, groups]
+
+clients:
+  - id: immich
+    secret_file: /config/secrets/immich-client-secret
+    token_endpoint_auth_method: client_secret_post
+    redirect_uris:
+      - https://photos.e2e.test/auth/login
+      - app.immich:///oauth-callback
+  # A plain OIDC client the e2e tests drive directly to check the protocol.
+  - id: e2e-rp
+    secret_file: /config/secrets/e2e-rp-client-secret
+    token_endpoint_auth_method: client_secret_basic
+    redirect_uris:
+      - http://rp.e2e.test/callback

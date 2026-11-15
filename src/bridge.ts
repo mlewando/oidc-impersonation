@@ -1,0 +1,163 @@
+import { createHash, createPrivateKey } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import Router from '@koa/router';
+import Koa from 'koa';
+import Provider, { type ClientMetadata } from 'oidc-provider';
+import { personalClaims, type IdentityClaims } from './claims.ts';
+import type { BridgeConfig } from './config.ts';
+import type { PendingUpstreamLogin, Upstream } from './upstream.ts';
+
+export interface BridgeDeps {
+  upstream: Upstream;
+}
+
+/** A sign-in that went upstream and hasn't come back yet. In memory only (README: 1 instance). */
+interface PendingSignIn {
+  interactionUid: string;
+  upstream: PendingUpstreamLogin;
+  expiresAt: number;
+  claims?: IdentityClaims;
+}
+
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+/** Builds the Bridge as a Node request handler: OIDC provider routes plus the Bridge's own routes. */
+export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
+  const accounts = new Map<string, IdentityClaims>();
+  const pendingByState = new Map<string, PendingSignIn>();
+  const pendingByUid = new Map<string, PendingSignIn>();
+
+  const provider = new Provider(config.issuer, {
+    clients: config.clients.map(
+      (c): ClientMetadata => ({
+        client_id: c.id,
+        client_secret: c.secret,
+        // oidc-provider only accepts custom-scheme redirect URIs (phone apps, such as
+        // `app.immich:///oauth-callback`) from `native` clients. Native clients still accept
+        // non-loopback https URIs, so 1 client can serve the web app and the phone app.
+        application_type: c.redirectUris.some((uri) => !/^https?:/.test(uri)) ? 'native' : 'web',
+        redirect_uris: c.redirectUris,
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: c.tokenEndpointAuthMethod,
+        id_token_signed_response_alg: 'RS256',
+      }),
+    ),
+    jwks: { keys: [signingJwk(config.signingKeyPem)] },
+    cookies: { keys: [config.cookieSecret] },
+    claims: {
+      openid: ['sub'],
+      email: ['email'],
+      profile: ['name', 'preferred_username'],
+    },
+    // The ID token carries the identity claims too, not only userinfo (README).
+    conformIdTokenClaims: false,
+    pkce: { required: () => true },
+    features: { devInteractions: { enabled: false } },
+    interactions: { url: (_ctx, interaction) => `/interaction/${interaction.uid}` },
+    async findAccount(_ctx, id) {
+      const claims = accounts.get(id);
+      if (!claims) return undefined;
+      return { accountId: id, claims: () => ({ ...claims }) };
+    },
+  });
+
+  const router = new Router();
+
+  // oidc-provider sends the browser here whenever a sign-in needs the Bridge's login step.
+  router.get('/interaction/:uid', async (ctx) => {
+    const details = await provider.interactionDetails(ctx.req, ctx.res);
+    const { url, pending } = await deps.upstream.startLogin();
+    const signIn: PendingSignIn = {
+      interactionUid: details.uid,
+      upstream: pending,
+      expiresAt: Date.now() + PENDING_TTL_MS,
+    };
+    dropExpired(pendingByState);
+    dropExpired(pendingByUid);
+    pendingByState.set(pending.state, signIn);
+    ctx.redirect(url.href);
+  });
+
+  // The Upstream provider's redirect URI (README: `<issuer>/callback`).
+  router.get('/callback', async (ctx) => {
+    const state = typeof ctx.query.state === 'string' ? ctx.query.state : undefined;
+    const signIn = state ? pendingByState.get(state) : undefined;
+    if (state) pendingByState.delete(state);
+    if (!signIn || signIn.expiresAt < Date.now()) {
+      ctx.status = 400;
+      ctx.body = 'Sign-in expired or unknown. Start again from the app.';
+      return;
+    }
+
+    // Built from the configured issuer, never from request headers.
+    const callbackUrl = new URL(`/callback?${ctx.querystring}`, config.issuer);
+    try {
+      signIn.claims = personalClaims(await deps.upstream.finishLogin(callbackUrl, signIn.upstream));
+    } catch (error) {
+      console.error('upstream sign-in failed:', error instanceof Error ? error.message : error);
+      ctx.status = 400;
+      ctx.body = 'Sign-in with the upstream provider failed. Start again from the app.';
+      return;
+    }
+    pendingByUid.set(signIn.interactionUid, signIn);
+
+    // The interaction cookie is scoped to /interaction/<uid>, so finish there: that proves the
+    // browser that came back is the one that started the sign-in.
+    ctx.redirect(`/interaction/${signIn.interactionUid}/finish`);
+  });
+
+  router.get('/interaction/:uid/finish', async (ctx) => {
+    const details = await provider.interactionDetails(ctx.req, ctx.res);
+    const signIn = pendingByUid.get(details.uid);
+    pendingByUid.delete(details.uid);
+    if (!signIn?.claims || signIn.expiresAt < Date.now()) {
+      ctx.status = 400;
+      ctx.body = 'Sign-in expired or unknown. Start again from the app.';
+      return;
+    }
+
+    const accountId = signIn.claims.sub;
+    accounts.set(accountId, signIn.claims);
+
+    const grant = new provider.Grant({ accountId, clientId: details.params.client_id as string });
+    grant.addOIDCScope(String(details.params.scope));
+    const grantId = await grant.save();
+
+    const redirectTo = await provider.interactionResult(
+      ctx.req,
+      ctx.res,
+      { login: { accountId }, consent: { grantId } },
+      { mergeWithLastSubmission: false },
+    );
+    ctx.redirect(redirectTo);
+  });
+
+  const bridgeApp = new Koa();
+  bridgeApp.use(router.routes());
+  const bridgeHandler = bridgeApp.callback();
+  const providerHandler = provider.callback();
+
+  return (req: IncomingMessage, res: ServerResponse) => {
+    const path = new URL(req.url ?? '/', 'http://bridge').pathname;
+    if (path === '/callback' || path.startsWith('/interaction/')) {
+      return bridgeHandler(req, res);
+    }
+    return providerHandler(req, res);
+  };
+}
+
+function dropExpired(pending: Map<string, PendingSignIn>) {
+  const now = Date.now();
+  for (const [key, signIn] of pending) {
+    if (signIn.expiresAt < now) pending.delete(key);
+  }
+}
+
+function signingJwk(pem: string) {
+  const jwk = createPrivateKey(pem).export({ format: 'jwk' });
+  const thumbprint = createHash('sha256')
+    .update(JSON.stringify({ e: jwk.e, kty: jwk.kty, n: jwk.n }))
+    .digest('base64url');
+  return { ...jwk, kid: thumbprint, alg: 'RS256', use: 'sig' };
+}

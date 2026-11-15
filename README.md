@@ -365,10 +365,34 @@ The stack is TypeScript (strict), Node 24, pnpm, Koa,
 
 ```sh
 pnpm install
-pnpm test     # unit + in-process e2e: mock upstream (oidc-provider) ⇄ bridge ⇄ test client app
-pnpm dev      # run locally against a mock or real upstream
-pnpm build
+pnpm typecheck
+pnpm test     # unit tests, no network
+pnpm e2e      # Docker Compose e2e: real Authelia ⇄ bridge ⇄ real Immich, driven by Playwright
+pnpm dev      # run locally; CONFIG_FILE points at your config
 ```
+
+The source runs directly on Node 24 (built-in TypeScript type stripping); there is no build step.
+
+### E2e stack
+
+`pnpm e2e` (`e2e/run.sh`) builds and starts the stack in `e2e/compose.yaml` from scratch, runs the
+Playwright suite in a container on the same network, and tears everything down. Results (report,
+traces, the bridge's log) land in `e2e/results/`.
+
+- `auth.e2e.test`: Authelia 4.39.x, file users `alice` and `bob` (password `e2e-password`),
+  `one_factor`.
+- `id.e2e.test`: the bridge, built from this repo, with config in `e2e/bridge/`.
+- `photos.e2e.test`: Immich 3.x behind a TLS proxy, with OAuth configured through its config file.
+- A setup container generates a throwaway CA, 1 certificate per host and the signing keys. Immich
+  and the bridge trust the CA through `NODE_EXTRA_CA_CERTS`.
+- Besides `immich`, the bridge has a 2nd client, `e2e-rp`, which the tests drive directly with
+  `openid-client` to check the protocol.
+
+Options:
+- `pnpm e2e -g <pattern>` runs only matching tests (arguments go to `playwright test`).
+- `KEEP_STACK=1 pnpm e2e` leaves the stack running afterwards.
+- `IMMICH_OAUTH=direct` points Immich straight at Authelia, without the bridge (used to compare
+  `sub` values).
 
 Release: push a `vX.Y.Z` tag. CI runs the tests and publishes the image to GHCR.
 

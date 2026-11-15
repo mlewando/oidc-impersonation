@@ -1,0 +1,12 @@
+# Test users; every password is `e2e-password`.
+users:
+  alice:
+    displayname: Alice
+    email: alice@e2e.test
+    password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
+    groups: [photos-family]
+  bob:
+    displayname: Bob
+    email: bob@e2e.test
+    password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
+    groups: []
