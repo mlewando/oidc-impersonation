@@ -153,10 +153,27 @@ ACME, or a cron job) need no restart.
 
 1 YAML file, whose path is set by `CONFIG_FILE` (default `/config/config.yaml`). Secrets are only
 ever **read from files** (`*_file` keys), never from inline values or env vars. The bridge
-validates the whole file at startup and refuses to start on any error: an unknown key, a
-duplicate client or target id, a selectable redirect URI that isn't in `redirect_uris`, a missing
-secret file, and so on. Targets belong to a client, so each app has its own set of accounts that
-may be impersonated.
+validates the whole file at startup, reports **every** problem at once (each with its key path,
+for example `clients[1].id: duplicate client id "my-app"`), and refuses to start on any of them:
+- an unknown or missing key
+- a missing, unreadable or empty secret file
+- an `issuer` that isn't `https://` (only `http://localhost` is accepted)
+- a `cookie_secret_file` with fewer than 32 bytes, or a `signing_key_file` that isn't a PEM RSA
+  private key
+- a `trusted_proxies` entry that isn't an IP address or CIDR range
+- upstream `scopes` without `openid`
+- no clients, a duplicate client or target id, a client without redirect URIs
+- a redirect URI that isn't a valid URI or has a `#fragment`
+- a selectable redirect URI that isn't in `redirect_uris`
+- a client that mixes a custom-scheme redirect URI (a phone app) with a non-loopback `http://` one;
+  use `https://` for the web URIs
+- a `backchannel_logout_uri` that isn't an http(s) URL
+
+Targets belong to a client, so each app has its own set of accounts that may be impersonated.
+
+Defaults: `port` 8080, `trusted_proxies` empty, upstream `scopes` `[openid, profile, email]`,
+`groups_claim` `groups`, `token_endpoint_auth_method` `client_secret_basic`,
+`selectable_redirect_uris` empty.
 
 ```yaml
 issuer: https://id.example.org          # public URL of the bridge
