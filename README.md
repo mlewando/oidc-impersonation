@@ -318,7 +318,8 @@ and pick yourself.
 ## Audit log
 
 The bridge writes 1 JSON line to stdout per decision, ready for journald, Loki and similar tools.
-Tokens, codes, cookies and secrets are never logged.
+stdout carries nothing else; startup messages, warnings and errors go to stderr. Tokens, codes,
+cookies and secrets are never logged.
 
 ```json
 {"ts":"2026-11-13T09:12:44.120Z","event":"sign-in","client":"immich","realUser":"alice","realSub":"9f1c…","identity":"impersonation","target":"family","result":"ok","ip":"203.0.113.7"}
@@ -329,7 +330,14 @@ Tokens, codes, cookies and secrets are never logged.
 | `sign-in` | `ok` (`identity`: `personal` or `impersonation`), `not-allowed` (a Target was posted that the person may not impersonate), `email-collides-with-target`, `bad-csrf`, `replay` |
 | `impersonation-logout` | `ok` or `failed`, with `reason`: `ttl` or `startup` |
 
-`ip` comes from `X-Forwarded-For` only when the request arrives from `trusted_proxies`.
+Fields: `realUser` is the real person's upstream `preferred_username`, `realSub` their upstream
+`sub`. `target` appears only for an impersonation. A `replay` line (a Client app redeemed an
+authorization code a 2nd time; the bridge rejects it and revokes what the code issued) comes from
+the app's server, so it has only `client` and `ip`.
+
+`ip` comes from `X-Forwarded-For` only when the request arrives from `trusted_proxies`. Then the
+bridge takes the rightmost address in the header that isn't a trusted proxy, so addresses a client
+adds to the header itself are ignored. Otherwise `ip` is the connecting address.
 
 ## Security model
 

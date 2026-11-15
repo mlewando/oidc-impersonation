@@ -113,6 +113,8 @@ services:
     volumes:
       - ./results:/e2e/results
       - *certs-volume
+      # Read-only use: the tests read the Bridge's stdout (the audit log) through the Docker API.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       photos:
         condition: service_started

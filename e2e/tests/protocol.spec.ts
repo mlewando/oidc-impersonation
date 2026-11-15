@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import * as oidc from 'openid-client';
+import { auditLinesSince, bridgeStdout, waitForAuditLine } from './bridge-output.ts';
 import { BRIDGE_URL, loginAtAuthelia } from './stack.ts';
 
 // Drives the Bridge as a plain OIDC client (`e2e-rp`, client_secret_basic) to check the protocol
@@ -104,4 +105,54 @@ test('issues an RS256 ID token for the requesting client, bound to its nonce, wi
     name: 'Alice',
     preferred_username: 'alice',
   });
+});
+
+test('a reused authorization code is rejected and audited as replay; no secret reaches stdout', async ({ page }) => {
+  const since = new Date(Date.now() - 1000);
+  const rp = await discoverRp();
+  const codeVerifier = oidc.randomPKCECodeVerifier();
+  const state = oidc.randomState();
+  const authUrl = oidc.buildAuthorizationUrl(rp, {
+    redirect_uri: RP_CALLBACK,
+    scope: 'openid email profile',
+    code_challenge: await oidc.calculatePKCECodeChallenge(codeVerifier),
+    code_challenge_method: 'S256',
+    state,
+  });
+  const callbackUrl = await followToRp(page, authUrl, { login: true });
+  const checks = { pkceCodeVerifier: codeVerifier, expectedState: state };
+
+  const tokens = await oidc.authorizationCodeGrant(rp, callbackUrl, checks);
+  await expect(oidc.authorizationCodeGrant(rp, callbackUrl, checks)).rejects.toMatchObject({
+    error: 'invalid_grant',
+  });
+
+  const replay = await waitForAuditLine(since, (l) => l.result === 'replay');
+  expect(replay).toEqual({
+    ts: expect.any(String),
+    event: 'sign-in',
+    client: 'e2e-rp',
+    result: 'replay',
+    ip: expect.stringMatching(/^\d+\.\d+\.\d+\.\d+$/),
+  });
+
+  // Every stdout line is an audit JSON line, and none carries a code, token, cookie or secret.
+  const lines = await auditLinesSince(new Date(0));
+  expect(lines.length).toBeGreaterThan(0);
+  const stdout = await bridgeStdout();
+  const secrets = [
+    callbackUrl.searchParams.get('code')!,
+    tokens.access_token,
+    tokens.id_token!,
+    codeVerifier,
+    state,
+    'e2e-rp-client-secret',
+    'e2e-immich-client-secret',
+    'e2e-upstream-client-secret',
+    'e2e-cookie-secret',
+    ...(await page.context().cookies()).map((c) => c.value).filter((v) => v.length >= 8),
+  ];
+  for (const secret of secrets) {
+    expect(stdout, 'stdout must not contain a secret').not.toContain(secret);
+  }
 });

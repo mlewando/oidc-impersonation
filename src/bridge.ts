@@ -3,12 +3,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import Router from '@koa/router';
 import Koa from 'koa';
 import Provider, { type ClientMetadata } from 'oidc-provider';
+import { clientIp, type AuditSink } from './audit.ts';
 import { personalClaims, type IdentityClaims } from './claims.ts';
 import type { BridgeConfig } from './config.ts';
 import type { PendingUpstreamLogin, Upstream } from './upstream.ts';
 
 export interface BridgeDeps {
   upstream: Upstream;
+  audit: AuditSink;
 }
 
 /** A sign-in that went upstream and hasn't come back yet. In memory only (README: 1 instance). */
@@ -16,6 +18,8 @@ interface PendingSignIn {
   interactionUid: string;
   upstream: PendingUpstreamLogin;
   expiresAt: number;
+  /** Set once the Upstream provider answered. */
+  realPerson?: { sub: string; username?: string };
   claims?: IdentityClaims;
 }
 
@@ -62,6 +66,26 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
     },
   });
 
+  const requestIp = (req: IncomingMessage) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    return clientIp(
+      req.socket.remoteAddress ?? '',
+      Array.isArray(forwarded) ? forwarded.join(',') : forwarded,
+      config.trustedProxies,
+    );
+  };
+
+  // A reused authorization code: oidc-provider rejects it and revokes what it issued; we audit it.
+  provider.on('grant.error', (ctx, error) => {
+    if ((error as { error_detail?: string }).error_detail !== 'authorization code already consumed') return;
+    deps.audit.write({
+      event: 'sign-in',
+      client: ctx.oidc.client?.clientId ?? 'unknown',
+      result: 'replay',
+      ip: requestIp(ctx.req),
+    });
+  });
+
   const router = new Router();
 
   // oidc-provider sends the browser here whenever a sign-in needs the Bridge's login step.
@@ -93,7 +117,10 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
     // Built from the configured issuer, never from request headers.
     const callbackUrl = new URL(`/callback?${ctx.querystring}`, config.issuer);
     try {
-      signIn.claims = personalClaims(await deps.upstream.finishLogin(callbackUrl, signIn.upstream));
+      const upstreamClaims = await deps.upstream.finishLogin(callbackUrl, signIn.upstream);
+      const username = upstreamClaims.preferred_username;
+      signIn.realPerson = { sub: upstreamClaims.sub, ...(typeof username === 'string' && { username }) };
+      signIn.claims = personalClaims(upstreamClaims);
     } catch (error) {
       console.error('upstream sign-in failed:', error instanceof Error ? error.message : error);
       ctx.status = 400;
@@ -111,16 +138,27 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
     const details = await provider.interactionDetails(ctx.req, ctx.res);
     const signIn = pendingByUid.get(details.uid);
     pendingByUid.delete(details.uid);
-    if (!signIn?.claims || signIn.expiresAt < Date.now()) {
+    if (!signIn?.claims || !signIn.realPerson || signIn.expiresAt < Date.now()) {
       ctx.status = 400;
       ctx.body = 'Sign-in expired or unknown. Start again from the app.';
       return;
     }
 
+    const clientId = String(details.params.client_id);
     const accountId = signIn.claims.sub;
     accounts.set(accountId, signIn.claims);
 
-    const grant = new provider.Grant({ accountId, clientId: details.params.client_id as string });
+    deps.audit.write({
+      event: 'sign-in',
+      client: clientId,
+      ...(signIn.realPerson.username !== undefined && { realUser: signIn.realPerson.username }),
+      realSub: signIn.realPerson.sub,
+      identity: 'personal',
+      result: 'ok',
+      ip: requestIp(ctx.req),
+    });
+
+    const grant = new provider.Grant({ accountId, clientId });
     grant.addOIDCScope(String(details.params.scope));
     const grantId = await grant.save();
 

@@ -6,14 +6,28 @@ import {
   loginAtAuthelia,
   startImmichOAuthLogin,
 } from './stack.ts';
+import { waitForAuditLine } from './bridge-output.ts';
 
 test('a real person signs in to Immich through the Bridge and lands in their own account', async ({ page }) => {
+  const since = new Date(Date.now() - 1000);
   await startImmichOAuthLogin(page);
   await loginAtAuthelia(page, 'alice');
 
   const user = await immichSignedInUser(page);
   expect(user.email).toBe('alice@e2e.test');
   expect(user.name).toBe('Alice');
+
+  const audit = await waitForAuditLine(since, (l) => l.event === 'sign-in' && l.client === 'immich');
+  expect(audit).toEqual({
+    ts: expect.any(String),
+    event: 'sign-in',
+    client: 'immich',
+    realUser: 'alice',
+    realSub: user.oauthId, // Immich stores the `sub` it received as oauthId
+    identity: 'personal',
+    result: 'ok',
+    ip: expect.stringMatching(/^\d+\.\d+\.\d+\.\d+$/), // the browser container; no trusted proxy
+  });
 });
 
 test('a 2nd sign-in reuses the Upstream session without a login prompt', async ({ page }) => {
