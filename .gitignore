@@ -1,6 +1,7 @@
 .envrc
 .config/
 HANDOFF.md
+.scratch/
 node_modules/
 dist/
 e2e/results/

@@ -132,7 +132,7 @@ lifetime.
 | Proxy headers | `X-Forwarded-Proto/Host/For` are trusted only from `trusted_proxies`. If that list is empty, they are ignored. |
 | Outbound | The Upstream provider (discovery, token, JWKS, userinfo) and Client apps' back-channel logout URLs. |
 | Inbound | Browsers, plus Client app servers (discovery, token, JWKS, userinfo). |
-| Health | `GET /healthz` returns `200` once config is valid and upstream discovery succeeded. |
+| Health | `GET /healthz` returns `200` once config is valid and upstream discovery succeeded. Until then the bridge listens but answers `503` on every route, and retries discovery every 2 s. For a container healthcheck, run `node src/healthcheck.ts` in the image. |
 
 #### Use HTTPS on every hop
 
@@ -148,7 +148,9 @@ a channel nobody else can read (the same host's loopback interface). Even then, 
 The bridge logs a warning at startup when it runs without `tls`.
 
 The certificate and key files are re-read automatically when they change, so renewals (for example
-ACME, or a cron job) need no restart.
+ACME, or a cron job) need no restart. The bridge checks them every 5 s, which also catches files
+replaced by rename or through a symlink swap (Kubernetes secrets, Podman secrets). If the new pair
+can't be loaded, the bridge logs `TLS reload failed` and keeps serving the current certificate.
 
 ### Configuration
 

@@ -41,6 +41,10 @@ services:
     volumes:
       - ./bridge:/config:ro
       - *certs-volume
+    healthcheck:
+      test: [CMD, node, src/healthcheck.ts]
+      interval: 2s
+      start_period: 30s
     depends_on:
       certs:
         condition: service_completed_successfully
@@ -119,7 +123,7 @@ services:
       photos:
         condition: service_started
       bridge:
-        condition: service_started
+        condition: service_healthy
     profiles: [test]
 
 volumes:

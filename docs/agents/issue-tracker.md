@@ -2,6 +2,9 @@
 
 Issues and PRDs for this repo live as markdown files in `.scratch/`.
 
+`.scratch/` is local only: it is git-ignored and never committed. Don't reference its files from
+committed files.
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`
