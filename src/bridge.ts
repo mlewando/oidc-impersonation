@@ -2,7 +2,7 @@ import { createHash, createPrivateKey } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import Router from '@koa/router';
 import Koa from 'koa';
-import Provider, { type ClientMetadata } from 'oidc-provider';
+import Provider, { interactionPolicy, type ClientMetadata, type ErrorOut, type KoaContextWithOIDC } from 'oidc-provider';
 import { clientIp, type AuditSink } from './audit.ts';
 import { personalClaims, type IdentityClaims } from './claims.ts';
 import type { BridgeConfig } from './config.ts';
@@ -48,7 +48,10 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
       }),
     ),
     jwks: { keys: [signingJwk(config.signingKeyPem)] },
+    enabledJWA: { idTokenSigningAlgValues: ['RS256'] },
     cookies: { keys: [config.cookieSecret] },
+    // No `offline_access`: the Bridge never issues refresh tokens (README).
+    scopes: ['openid', 'email', 'profile'],
     claims: {
       openid: ['sub'],
       email: ['email'],
@@ -57,8 +60,31 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
     // The ID token carries the identity claims too, not only userinfo (README).
     conformIdTokenClaims: false,
     pkce: { required: () => true },
-    features: { devInteractions: { enabled: false } },
-    interactions: { url: (_ctx, interaction) => `/interaction/${interaction.uid}` },
+    // Authorization Code only; no implicit or hybrid response types.
+    responseTypes: ['code'],
+    // Everything the README's security model doesn't need is off. Introspection, revocation,
+    // registration, device flow, CIBA and client credentials are already off by default.
+    features: {
+      devInteractions: { enabled: false },
+      rpInitiatedLogout: { enabled: false },
+      pushedAuthorizationRequests: { enabled: false },
+      resourceIndicators: { enabled: false },
+      dPoP: { enabled: false },
+      userinfo: { enabled: true },
+    },
+    ttl: {
+      AuthorizationCode: 60, // short-lived and single-use
+      AccessToken: 600, // only used for userinfo right after sign-in
+      IdToken: 3600,
+      Interaction: PENDING_TTL_MS / 1000,
+      Grant: PENDING_TTL_MS / 1000,
+      Session: PENDING_TTL_MS / 1000,
+    },
+    interactions: {
+      url: (_ctx, interaction) => `/interaction/${interaction.uid}`,
+      policy: noBridgeSessionPolicy(),
+    },
+    renderError,
     async findAccount(_ctx, id) {
       const claims = accounts.get(id);
       if (!claims) return undefined;
@@ -183,6 +209,34 @@ export function createBridge(config: BridgeConfig, deps: BridgeDeps) {
     }
     return providerHandler(req, res);
   };
+}
+
+/**
+ * ADR 0002: the Bridge keeps no login session. oidc-provider's default policy skips the login step
+ * when its own session cookie says someone is signed in; this extra check asks for the login step
+ * on every authorization request, except when resuming from the login step that just ran. So
+ * every sign-in goes upstream, and `prompt=none` fails with `login_required`.
+ */
+function noBridgeSessionPolicy() {
+  const policy = interactionPolicy.base();
+  policy
+    .get('login')!
+    .checks.add(
+      new interactionPolicy.Check('bridge_no_session', 'The Bridge signs in upstream on every request', 'login_required', (ctx) =>
+        ctx.oidc.result?.login ? interactionPolicy.Check.NO_NEED_TO_PROMPT : interactionPolicy.Check.REQUEST_PROMPT,
+      ),
+    );
+  return policy;
+}
+
+/** Minimal error page: the OAuth error code and description, HTML-escaped, nothing else. */
+function renderError(ctx: KoaContextWithOIDC, out: ErrorOut) {
+  const escape = (s: unknown) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  ctx.type = 'html';
+  ctx.body = `<!doctype html><meta charset="utf-8"><title>Sign-in error</title>
+<h1>Sign-in error</h1><p><strong>${escape(out.error)}</strong>: ${escape(out.error_description)}</p>
+<p>Start again from the app.</p>`;
 }
 
 function dropExpired(pending: Map<string, PendingSignIn>) {

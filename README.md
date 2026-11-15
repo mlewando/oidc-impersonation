@@ -34,7 +34,8 @@ like an ordinary sign-in of the impersonated account.
 The bridge is an **OIDC provider** toward Client apps and an **OIDC client** toward the Upstream
 provider ([ADR 0001](docs/adr/0001-chained-oidc-bridge.md)). It keeps no login session of its own:
 every sign-in makes a silent round trip upstream, so identity and group membership are always
-fresh ([ADR 0002](docs/adr/0002-no-bridge-login-session.md)).
+fresh ([ADR 0002](docs/adr/0002-no-bridge-login-session.md)). For the same reason, a request with
+`prompt=none` always fails with `login_required`.
 
 ```mermaid
 sequenceDiagram
@@ -347,12 +348,15 @@ adds to the header itself are ignored. Otherwise `ip` is the connecting address.
   - Authorization Code only, with PKCE (S256) required for every client
   - no refresh tokens
   - exact redirect URI match
-  - short-lived, single-use codes
+  - short-lived (60 s), single-use codes; a reused code is rejected, revokes what it issued, and
+    is audited as `replay`
+  - access tokens live 10 min and are only good for userinfo
   - `state` and `nonce` validated
   - audience restricted per client
-  - RS256 ID tokens through JWKS
-  - Dynamic registration, introspection, revocation, RP-initiated logout and every unused grant
-    are disabled.
+  - RS256 ID tokens through JWKS (the only signing algorithm advertised)
+  - Dynamic registration, introspection, revocation, RP-initiated logout, pushed authorization
+    requests, DPoP, resource indicators, implicit and hybrid flows and every unused grant are
+    disabled.
 - **Toward the Upstream provider:**
   - validates `iss`, `aud`, signature, `nonce`, `state` and PKCE
   - uses the upstream ID token only to build the downstream one and never forwards it

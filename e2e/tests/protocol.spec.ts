@@ -105,6 +105,12 @@ test('issues an RS256 ID token for the requesting client, bound to its nonce, wi
     name: 'Alice',
     preferred_username: 'alice',
   });
+
+  // The ID token describes exactly the same identity as userinfo: apart from protocol claims,
+  // nothing more and nothing less.
+  const protocolClaims = new Set(['iss', 'aud', 'exp', 'iat', 'nonce', 'at_hash', 'c_hash', 'auth_time', 'sid', 'azp', 'acr', 'amr']);
+  const identityInIdToken = Object.fromEntries(Object.entries(claims).filter(([k]) => !protocolClaims.has(k)));
+  expect(identityInIdToken).toEqual(userinfo);
 });
 
 test('a reused authorization code is rejected and audited as replay; no secret reaches stdout', async ({ page }) => {
