@@ -59,6 +59,16 @@ clients:
     selectable_redirect_uris:
       - https://app.example.org/oauth/callback
     backchannel_logout_uri: https://app.example.org/oauth/backchannel-logout
+    targets:
+      - id: shared
+        label: Shared account
+        allowed_groups: [app-shared, admins]
+        session_ttl: 2h
+        claims:
+          sub: shared-sub
+          email: shared@example.org
+          name: Shared account
+          preferred_username: shared
 `;
 
 /** The valid config with `edit` applied to its parsed YAML, re-serialised. */
@@ -111,6 +121,20 @@ describe('parseConfig', () => {
             redirectUris: ['https://app.example.org/oauth/callback', 'myapp://oauth-callback'],
             selectableRedirectUris: ['https://app.example.org/oauth/callback'],
             backchannelLogoutUri: 'https://app.example.org/oauth/backchannel-logout',
+            targets: [
+              {
+                id: 'shared',
+                label: 'Shared account',
+                allowedGroups: ['app-shared', 'admins'],
+                sessionTtl: 7200,
+                claims: {
+                  sub: 'shared-sub',
+                  email: 'shared@example.org',
+                  name: 'Shared account',
+                  preferred_username: 'shared',
+                },
+              },
+            ],
           },
         ],
       },
@@ -318,6 +342,58 @@ describe('parseConfig', () => {
     expect(await errorsOf((raw) => raw.clients[0].redirect_uris.push('http://app.example.org/cb'))).toEqual([
       expect.stringMatching(/^clients\[0\]\.redirect_uris: .*custom-scheme/),
     ]);
+  });
+
+  describe('targets', () => {
+    const shared = (raw: any) => raw.clients[0].targets[0];
+
+    it('default to none, and a session_ttl of 8h', async () => {
+      const none = await parseWith((raw) => delete raw.clients[0].targets);
+      if (!none.ok) throw new Error(none.errors.join('\n'));
+      expect(none.config.clients[0]!.targets).toEqual([]);
+
+      const ttl = await parseWith((raw) => delete shared(raw).session_ttl);
+      if (!ttl.ok) throw new Error(ttl.errors.join('\n'));
+      expect(ttl.config.clients[0]!.targets[0]!.sessionTtl).toBe(8 * 3600);
+    });
+
+    it('need only a sub among their claims', async () => {
+      const result = await parseWith((raw) => (shared(raw).claims = { sub: 'shared-sub' }));
+      if (!result.ok) throw new Error(result.errors.join('\n'));
+      expect(result.config.clients[0]!.targets[0]!.claims).toEqual({ sub: 'shared-sub' });
+    });
+
+    it('reject duplicate ids and duplicate subs within a client', async () => {
+      expect(
+        await errorsOf((raw) => {
+          shared(raw).claims.email = undefined;
+          raw.clients[0].targets.push({ ...shared(raw), label: 'Again' });
+          raw.clients[0].targets.push({ ...shared(raw), id: 'other' });
+        }),
+      ).toEqual([
+        expect.stringMatching(/^clients\[0\]\.targets\[1\]\.id: duplicate target id "shared"/),
+        expect.stringMatching(/^clients\[0\]\.targets\[1\]\.claims\.sub: duplicate target sub "shared-sub"/),
+        expect.stringMatching(/^clients\[0\]\.targets\[2\]\.claims\.sub: duplicate target sub "shared-sub"/),
+      ]);
+    });
+
+    it('reject a missing sub, no allowed groups, unknown claims and a bad session_ttl', async () => {
+      expect(
+        await errorsOf((raw) => {
+          delete shared(raw).claims.sub;
+          shared(raw).claims.role = 'admin';
+          shared(raw).allowed_groups = [];
+          shared(raw).session_ttl = '1s';
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^clients\[0\]\.targets\[0\]\.allowed_groups: /),
+          expect.stringMatching(/^clients\[0\]\.targets\[0\]\.session_ttl: .*between 5s/),
+          expect.stringMatching(/^clients\[0\]\.targets\[0\]\.claims: .*role/),
+          expect.stringMatching(/^clients\[0\]\.targets\[0\]\.claims\.sub: /),
+        ]),
+      );
+    });
   });
 
   it('rejects a back-channel logout URI that is not an http(s) URL', async () => {

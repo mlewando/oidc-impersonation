@@ -29,6 +29,17 @@ clients:
     redirect_uris:
       - https://photos.e2e.test/auth/login
       - app.immich:///oauth-callback
+    selectable_redirect_uris:
+      - https://photos.e2e.test/auth/login
+    targets:
+      - id: family
+        label: Family
+        allowed_groups: [photos-family]
+        session_ttl: 1h
+        claims:
+          sub: e2e-family
+          email: family@e2e.test
+          name: Family
   # A plain OIDC client the e2e tests drive directly to check the protocol.
   - id: e2e-rp
     secret_file: /config/secrets/e2e-rp-client-secret

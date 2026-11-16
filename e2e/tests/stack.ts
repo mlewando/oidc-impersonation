@@ -19,11 +19,24 @@ export async function loginAtAuthelia(page: Page, username: string) {
   await page.locator('#sign-in-button').click();
 }
 
+/** Waits for the Bridge's Account selection page and continues as the account labelled `label`. */
+export async function chooseAccount(page: Page, label: string | RegExp) {
+  await page.waitForURL((url) => url.origin === BRIDGE_URL && url.pathname.endsWith('/finish'));
+  await page.getByLabel(label).check();
+  await page.getByRole('button', { name: 'Continue' }).click();
+}
+
+/** Who Immich says is signed in with this browser context's cookies, or the HTTP status. */
+export async function immichMe(page: Page) {
+  const res = await page.request.get(`${IMMICH_URL}/api/users/me`);
+  return res.ok() ? ((await res.json()) as { id: string; email: string }) : res.status();
+}
+
 /** Waits until Immich has finished the OAuth callback and returns who Immich thinks is signed in. */
 export async function immichSignedInUser(page: Page) {
   // A 1st sign-in lands on /auth/onboarding, a later one on the timeline; both mean "signed in".
   await page.waitForURL((url) => url.origin === IMMICH_URL && url.pathname !== '/auth/login');
   const res = await page.request.get(`${IMMICH_URL}/api/users/me`);
   expect(res.ok(), `GET /api/users/me: ${res.status()}`).toBe(true);
-  return (await res.json()) as { email: string; name: string; oauthId: string };
+  return (await res.json()) as { id: string; email: string; name: string; oauthId: string };
 }

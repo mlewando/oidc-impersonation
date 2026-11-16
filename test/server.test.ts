@@ -33,6 +33,7 @@ function baseConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
         tokenEndpointAuthMethod: 'client_secret_basic',
         redirectUris: ['https://app.example.org/cb'],
         selectableRedirectUris: [],
+        targets: [],
       },
     ],
     ...overrides,

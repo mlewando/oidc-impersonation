@@ -3,6 +3,7 @@ import { readFile as fsReadFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { personalClaims as identityClaims, type IdentityClaims } from './claims.ts';
 import { errorMessage } from './errors.ts';
 
 export interface ClientConfig {
@@ -12,6 +13,20 @@ export interface ClientConfig {
   redirectUris: string[];
   selectableRedirectUris: string[];
   backchannelLogoutUri?: string;
+  targets: TargetConfig[];
+}
+
+/** An account of 1 Client app that real people may impersonate. */
+export interface TargetConfig {
+  id: string;
+  /** Shown on the Account selection page. */
+  label: string;
+  /** Members of any of these upstream groups may impersonate it. */
+  allowedGroups: string[];
+  /** Seconds an Impersonation session lasts (enforced only with back-channel logout). */
+  sessionTtl: number;
+  /** Exactly what the Client app receives. */
+  claims: IdentityClaims;
 }
 
 export interface BridgeConfig {
@@ -118,6 +133,7 @@ function buildSchema(readFile: ReadFile) {
       redirect_uris: z.array(redirectUri).min(1),
       selectable_redirect_uris: z.array(z.string()).default([]),
       backchannel_logout_uri: z.string().refine(isHttpUrl, 'must be an http(s) URL').optional(),
+      targets: z.array(target).default([]),
     })
     .superRefine((c, ctx) => {
       c.selectable_redirect_uris.forEach((uri, i) => {
@@ -125,6 +141,8 @@ function buildSchema(readFile: ReadFile) {
           ctx.addIssue({ code: 'custom', path: ['selectable_redirect_uris', i], message: `${uri} is not in redirect_uris` });
         }
       });
+      duplicates(c.targets, (t) => t.id, ctx, (i) => ['targets', i, 'id'], 'target id');
+      duplicates(c.targets, (t) => t.claims.sub, ctx, (i) => ['targets', i, 'claims', 'sub'], 'target sub');
       // oidc-provider only accepts custom schemes on `native` clients, which refuse non-loopback http.
       const custom = c.redirect_uris.some((uri) => !/^https?:/.test(uri));
       const plainHttp = c.redirect_uris.some((uri) => isNonLoopbackHttp(uri));
@@ -144,6 +162,7 @@ function buildSchema(readFile: ReadFile) {
         redirectUris: c.redirect_uris,
         selectableRedirectUris: c.selectable_redirect_uris,
         ...(c.backchannel_logout_uri !== undefined && { backchannelLogoutUri: c.backchannel_logout_uri }),
+        targets: c.targets,
       }),
     );
 
@@ -186,15 +205,7 @@ function buildSchema(readFile: ReadFile) {
       clients: z
         .array(client)
         .min(1)
-        .superRefine((clients, ctx) => {
-          const seen = new Set<string>();
-          clients.forEach((c, i) => {
-            if (seen.has(c.id)) {
-              ctx.addIssue({ code: 'custom', path: [i, 'id'], message: `duplicate client id "${c.id}"` });
-            }
-            seen.add(c.id);
-          });
-        }),
+        .superRefine((clients, ctx) => duplicates(clients, (c) => c.id, ctx, (i) => [i, 'id'], 'client id')),
     })
     .transform(
       (raw): BridgeConfig => ({
@@ -288,6 +299,45 @@ function duration(bounds: { min: number; max: number }) {
     return seconds;
   });
 }
+
+/** Reports every item whose `key` an earlier item already has. */
+function duplicates<T>(
+  items: T[],
+  key: (item: T) => string,
+  ctx: z.RefinementCtx,
+  path: (index: number) => PropertyKey[],
+  what: string,
+) {
+  const seen = new Set<string>();
+  items.forEach((item, i) => {
+    const value = key(item);
+    if (seen.has(value)) ctx.addIssue({ code: 'custom', path: path(i), message: `duplicate ${what} "${value}"` });
+    seen.add(value);
+  });
+}
+
+const target = z
+  .strictObject({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    allowed_groups: z.array(z.string().min(1)).min(1),
+    session_ttl: duration({ min: 5, max: 30 * 24 * 3600 }).default(8 * 3600),
+    claims: z.strictObject({
+      sub: z.string().min(1),
+      email: z.string().min(1).optional(),
+      name: z.string().min(1).optional(),
+      preferred_username: z.string().min(1).optional(),
+    }),
+  })
+  .transform(
+    (t): TargetConfig => ({
+      id: t.id,
+      label: t.label,
+      allowedGroups: t.allowed_groups,
+      sessionTtl: t.session_ttl,
+      claims: identityClaims(t.claims),
+    }),
+  );
 
 const redirectUri = z.string().superRefine((value, ctx) => {
   const url = URL.parse(value);

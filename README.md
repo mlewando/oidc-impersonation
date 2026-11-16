@@ -185,7 +185,10 @@ for example `clients[1].id: duplicate client id "my-app"`), and refuses to start
   private key
 - a `trusted_proxies` entry that isn't an IP address or CIDR range
 - upstream `scopes` without `openid`
-- no clients, a duplicate client or target id, a client without redirect URIs
+- no clients, a duplicate client id, a client without redirect URIs
+- a duplicate target id or `claims.sub` within a client, a target without `allowed_groups` or
+  `claims.sub`, a claim other than `sub`, `email`, `name` and `preferred_username`, or a
+  `session_ttl` outside 5 s–30 days
 - a redirect URI that isn't a valid URI or has a `#fragment`
 - a selectable redirect URI that isn't in `redirect_uris`
 - a client that mixes a custom-scheme redirect URI (a phone app) with a non-loopback `http://` one;
@@ -200,7 +203,8 @@ Targets belong to a client, so each app has its own set of accounts that may be 
 
 Defaults: `port` 8080, `trusted_proxies` empty, `access_token_ttl` `10m`, `store.key_prefix`
 `oidc-impersonation:`, upstream `scopes` `[openid, profile, email]`, `groups_claim` `groups`,
-`token_endpoint_auth_method` `client_secret_basic`, `selectable_redirect_uris` empty.
+`token_endpoint_auth_method` `client_secret_basic`, `selectable_redirect_uris` empty, `targets`
+empty, `session_ttl` `8h`.
 
 ```yaml
 issuer: https://id.example.org          # public URL of the bridge

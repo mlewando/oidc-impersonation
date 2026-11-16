@@ -8,10 +8,17 @@ import Provider, {
 import type { IdentityClaims } from './claims.ts';
 import type { BridgeConfig } from './config.ts';
 import { storeAdapter } from './oidc-adapter.ts';
+import { escapeHtml, PAGE_HEADERS } from './selection-page.ts';
 import type { Store } from './store.ts';
 
 /** Seconds a sign-in may take: the Bridge's login step, upstream round trip included. */
 export const SIGN_IN_TTL = 600;
+
+/** What 1 sign-in issued: the claims the Client app gets and, for an Impersonation, who and what. */
+export interface IssuedIdentity {
+  claims: IdentityClaims;
+  impersonation?: { target: string; realSub: string; realUser?: string };
+}
 
 export interface BridgeProvider {
   provider: Provider;
@@ -22,7 +29,7 @@ export interface BridgeProvider {
   issueIdentity(
     ctx: Pick<KoaContextWithOIDC, 'req' | 'res'>,
     details: { params: Record<string, unknown> },
-    claims: IdentityClaims,
+    identity: IssuedIdentity,
   ): Promise<string>;
 }
 
@@ -93,7 +100,11 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
       Grant: config.accessTokenTtl,
       IdToken: 3600,
       Interaction: SIGN_IN_TTL,
-      Session: SIGN_IN_TTL,
+      // ADR 0002: oidc-provider's session only has to last the request that finishes a sign-in.
+      // Kept any longer, the next sign-in in the same browser would find it: with another
+      // identity (a Target after Personal) oidc-provider would try to log it out first, and with
+      // the same one it would reuse its `sid`.
+      Session: 1,
     },
 
     interactions: {
@@ -106,25 +117,26 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
     // `sub` is needed.
     async findAccount(_ctx, sub, token) {
       if (!token) return { accountId: sub, claims: () => ({ sub }) };
-      const claims = await store.get<IdentityClaims>(identityKey(token.grantId ?? ''));
-      if (!claims || claims.sub !== sub) return undefined;
-      return { accountId: sub, claims: () => ({ ...claims }) };
+      const issued = await store.get<IssuedIdentity>(identityKey(token.grantId ?? ''));
+      if (!issued || issued.claims.sub !== sub) return undefined;
+      return { accountId: sub, claims: () => ({ ...issued.claims }) };
     },
   });
 
   return {
     provider,
-    async issueIdentity(ctx, details, claims) {
-      const grant = new provider.Grant({ accountId: claims.sub, clientId: String(details.params.client_id) });
+    async issueIdentity(ctx, details, identity) {
+      const { sub } = identity.claims;
+      const grant = new provider.Grant({ accountId: sub, clientId: String(details.params.client_id) });
       grant.addOIDCScope(String(details.params.scope));
       const grantId = await grant.save();
 
       const [, redirectTo] = await Promise.all([
-        store.set(identityKey(grantId), claims, config.accessTokenTtl),
+        store.set(identityKey(grantId), identity, config.accessTokenTtl),
         provider.interactionResult(
           ctx.req,
           ctx.res,
-          { login: { accountId: claims.sub }, consent: { grantId } },
+          { login: { accountId: sub }, consent: { grantId } },
           { mergeWithLastSubmission: false },
         ),
       ]);
@@ -155,14 +167,11 @@ function noBridgeSessionPolicy() {
 
 /** Minimal error page: the OAuth error code and description, HTML-escaped, nothing else. */
 function renderError(ctx: KoaContextWithOIDC, out: ErrorOut) {
+  ctx.set(PAGE_HEADERS);
   ctx.type = 'html';
   ctx.body = `<!doctype html><meta charset="utf-8"><title>Sign-in error</title>
 <h1>Sign-in error</h1><p><strong>${escapeHtml(out.error)}</strong>: ${escapeHtml(out.error_description)}</p>
 <p>Start again from the app.</p>`;
-}
-
-function escapeHtml(value: unknown) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 function signingJwk(pem: string) {

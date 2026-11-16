@@ -13,6 +13,7 @@ export interface SignInEvent {
   realUser?: string;
   realSub?: string;
   identity?: 'personal' | 'impersonation';
+  /** The Target impersonated, refused (`not-allowed`) or collided with. */
   target?: string;
   result: 'ok' | 'not-allowed' | 'email-collides-with-target' | 'bad-csrf' | 'replay';
   ip: string;
