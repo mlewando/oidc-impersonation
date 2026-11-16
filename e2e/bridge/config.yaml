@@ -40,6 +40,13 @@ clients:
           sub: e2e-family
           email: family@e2e.test
           name: Family
+      # Nobody in the test users may impersonate it; the tests post it anyway.
+      - id: archive
+        label: Archive
+        allowed_groups: [photos-archive]
+        claims:
+          sub: e2e-archive
+          email: archive@e2e.test
   # A plain OIDC client the e2e tests drive directly to check the protocol.
   - id: e2e-rp
     secret_file: /config/secrets/e2e-rp-client-secret
