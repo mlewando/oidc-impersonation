@@ -102,13 +102,18 @@ To impersonate a Target, or to stop, log out of the app with its own button and 
 Many apps never expire their own sessions. For Client apps that support **OIDC back-channel
 logout**, the bridge ends impersonation sessions itself
 ([ADR 0003](docs/adr/0003-impersonation-session-cap-via-backchannel-logout.md)):
-- every Target identity gets a fresh `sid`
-- after the Target's `session_ttl`, the bridge POSTs a signed logout token to the app. If the POST
-  fails, it retries for about 10 min, then gives up and logs `failed`; the session then lasts as
-  long as the app keeps it.
-- on startup, it sends 1 logout per Target by the Target's `sub`, which ends all impersonation
-  sessions of that Target *(to be revisited now that state lives in Valkey, see
-  [ADR 0005](docs/adr/0005-state-in-valkey.md))*
+- every sign-in to such an app gets a fresh `sid` in its ID token
+- when the app redeems the code of an impersonation, the bridge records the session in its
+  [store](#store)
+- after the Target's `session_ttl`, the bridge POSTs a signed logout token for that `sid` to the
+  app. If the POST fails, it retries every 30 s for about 10 min, then gives up and logs `failed`;
+  the session then lasts as long as the app keeps it.
+- the record survives a bridge restart: pending logouts resume, and one that fell due while the
+  bridge was down is sent right away. A restart signs nobody out.
+- if the store lost the record (Valkey restarted without persistence, was replaced, or the bridge
+  didn't run for 30 days), the next start can't know which sessions are open. It then sends 1
+  logout per Target by the Target's `sub` alone, which ends **every** session of that account in
+  the app, including sessions opened directly with an upstream account that *is* the Target.
 
 Personal sessions are never limited. Apps without back-channel logout keep their own session
 lifetime.
@@ -132,15 +137,19 @@ and `linux/arm64`. Pin it by digest.
 
 The bridge keeps its state in Valkey (Redis works too)
 ([ADR 0005](docs/adr/0005-state-in-valkey.md)): authorization codes, access tokens, grants,
-sign-ins in progress, and the identity issued by each sign-in. Every entry expires on its own,
-after at most `access_token_ttl` or 10 min, whichever is longer; nothing stays.
+sign-ins in progress, the identity issued by each sign-in, and the open Impersonation sessions
+whose logout is still due (see [Impersonation session limits](#impersonation-session-limits)).
+Every entry expires on its own: protocol state after at most `access_token_ttl` or 10 min,
+whichever is longer; an Impersonation session 30 days after its `session_ttl`; the session
+registry's marker 30 days after the bridge last ran.
 
 - Give the bridge **its own** Valkey, or at least its own ACL user and `key_prefix`. Don't share
   it with an app: its entries let whoever reads them redeem codes and tokens.
 - Connect over TLS (`rediss://`) with a password (`password_file`), even on a private network.
   A private CA goes in `NODE_EXTRA_CA_CERTS`.
-- Persistence (RDB/AOF) is optional. Without it, a Valkey restart drops sign-ins in progress.
-  With it, those entries are written to Valkey's disk; protect that disk like a secret.
+- Persistence (RDB/AOF) is optional. Without it, a Valkey restart drops sign-ins in progress and
+  the session registry; the bridge then logs out every Target at its next start. With it, those
+  entries are written to Valkey's disk; protect that disk like a secret.
 - The bridge starts without Valkey and retries; `/healthz` stays `503` while Valkey is unreachable.
 
 ### Network

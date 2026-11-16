@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { restartBridge, waitForAuditLine } from './bridge-container.ts';
+import { forgetSessionRegistry, restartBridge, waitForAuditLine } from './bridge-container.ts';
 import { chooseAccount, immichMe, immichSignedInUser, loginAtAuthelia, startImmichOAuthLogin } from './stack.ts';
 
 // ADR 0003: the Bridge ends Impersonation sessions in Immich through back-channel logout. Each
@@ -48,4 +48,26 @@ test('a Bridge restart keeps Impersonation sessions open: their logouts resume f
   expect(await immichMe(alice)).toMatchObject({ email: 'family@e2e.test' });
   const startupLogouts = (l: { event: string; reason?: unknown }) => l.event === 'impersonation-logout' && l.reason === 'startup';
   await expect(waitForAuditLine(since, startupLogouts, 3_000)).rejects.toThrow();
+});
+
+test('if the store lost the registry, a restart logs out every Target by sub and keeps Personal sessions', async ({
+  browser,
+}) => {
+  const since = new Date(Date.now() - 1000);
+  const alice = await signedIn(browser, 'alice', 'Family');
+  const bob = await signedIn(browser, 'bob');
+
+  await forgetSessionRegistry();
+  await restartBridge();
+
+  await expectSignedOut(alice, 20_000);
+  expect(await immichMe(bob)).toMatchObject({ email: 'bob@e2e.test' });
+  expect(await waitForAuditLine(since, (l) => l.reason === 'startup' && l.target === 'family')).toEqual({
+    ts: expect.any(String),
+    event: 'impersonation-logout',
+    client: 'immich',
+    target: 'family',
+    reason: 'startup',
+    result: 'ok',
+  });
 });

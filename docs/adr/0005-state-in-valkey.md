@@ -4,7 +4,7 @@ The Bridge must remember a few things between requests:
 - `oidc-provider`'s authorization codes, access tokens, grants, sessions and interactions
 - sign-ins in progress while the browser is at the Upstream provider
 - the identity each sign-in issued, read back for the ID token and userinfo
-- later, the Impersonation session registry (ADR 0003)
+- the Impersonation sessions whose logout is still due (ADR 0003)
 
 All of it now goes through 1 small key-value interface (`Store`: get, set with TTL, delete,
 take-once, sets) backed by Valkey. Nothing lives in process memory. Every entry has a TTL, so
@@ -33,7 +33,7 @@ protocol state.
   without it and retries.
 - Whoever can read the Bridge's Valkey can redeem its codes and tokens while they live. It needs its
   own instance or ACL user, TLS and a password, and its disk must be protected if persistence is on.
-- ADR 0003's startup logout ("the registry is empty after a restart") no longer has to be the
-  only safety net: the `sid` registry can live in Valkey too. Revisit when implementing it.
+- ADR 0003's session record lives in Valkey too, so a restart signs nobody out. The logout of
+  every Target by `sub` now runs only when Valkey lost that record.
 - Tests run the same `Store` contract against an in-memory implementation (unit tests) and a real
   Valkey (`pnpm test:valkey`, and the e2e stack).
