@@ -46,6 +46,10 @@ export function valkeyStore(opts: StoreConfig): Store {
       return client.smembers(key);
     },
 
+    async removeFromSet(key, member) {
+      await client.srem(key, member);
+    },
+
     async ready() {
       if (client.status === 'wait') await client.connect();
       await client.ping();

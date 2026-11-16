@@ -15,6 +15,7 @@ export interface Store {
   /** Adds `member` to the set at `key`; the set expires with its longest-lived member. */
   addToSet(key: string, member: string, ttlSeconds: number): Promise<void>;
   members(key: string): Promise<string[]>;
+  removeFromSet(key: string, member: string): Promise<void>;
   /** Resolves once the store answers; rejects if it can't be reached. */
   ready(): Promise<void>;
   close(): Promise<void>;
@@ -79,6 +80,14 @@ export function memoryStore(opts: { now?: () => number } = {}): Store {
     async members(key) {
       const entry = live(key);
       return entry ? (JSON.parse(entry.json) as string[]) : [];
+    },
+
+    async removeFromSet(key, member) {
+      const entry = live(key);
+      if (!entry) return;
+      const members = (JSON.parse(entry.json) as string[]).filter((m) => m !== member);
+      if (members.length) entries.set(key, { ...entry, json: JSON.stringify(members) });
+      else entries.delete(key);
     },
 
     async ready() {},

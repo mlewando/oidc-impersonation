@@ -31,6 +31,13 @@ export interface BridgeProvider {
     details: { params: Record<string, unknown> },
     identity: IssuedIdentity,
   ): Promise<string>;
+  /** The identity a grant was issued for, while the grant lives. */
+  issuedIdentity(grantId: string): Promise<IssuedIdentity | undefined>;
+  /**
+   * POSTs a signed back-channel logout token to the client: for 1 session (`sid`), or for every
+   * session of `sub` when `sid` is left out. Rejects unless the client answers 200 or 204.
+   */
+  backchannelLogout(clientId: string, sub: string, sid?: string): Promise<void>;
 }
 
 /**
@@ -59,6 +66,12 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
         response_types: ['code'],
         token_endpoint_auth_method: c.tokenEndpointAuthMethod,
         id_token_signed_response_alg: 'RS256',
+        // With a back-channel logout URI, every ID token carries a `sid` (fresh for each sign-in,
+        // see `ttl.Session`), so the Bridge can end exactly that Impersonation session (ADR 0003).
+        ...(c.backchannelLogoutUri !== undefined && {
+          backchannel_logout_uri: c.backchannelLogoutUri,
+          backchannel_logout_session_required: true,
+        }),
       }),
     ),
 
@@ -90,6 +103,8 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
       resourceIndicators: { enabled: false },
       dPoP: { enabled: false },
       userinfo: { enabled: true },
+      // Only the Bridge sends logout tokens (session cap); there is no logout endpoint.
+      backchannelLogout: { enabled: true },
     },
 
     ttl: {
@@ -112,6 +127,15 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
       policy: noBridgeSessionPolicy(),
     },
     renderError,
+
+    // The only URLs oidc-provider ever fetches are the configured back-channel logout URIs (no
+    // dynamic registration, no request objects, no client JWKS URIs). They usually resolve to a
+    // private address, which oidc-provider's SSRF guard would refuse; an operator-written URL
+    // needs no such guard.
+    fetch: (url, init) => {
+      const { dispatcher: _, ...options } = (init ?? {}) as RequestInit & { dispatcher?: unknown };
+      return fetch(url, options);
+    },
 
     // Without a token (oidc-provider checking its session during an authorization request) only
     // `sub` is needed.
@@ -141,6 +165,19 @@ export function createProvider(config: BridgeConfig, store: Store): BridgeProvid
         ),
       ]);
       return redirectTo;
+    },
+
+    issuedIdentity: (grantId) => store.get<IssuedIdentity>(identityKey(grantId)),
+
+    async backchannelLogout(clientId, sub, sid) {
+      const client = await provider.Client.find(clientId);
+      if (!client) throw new Error(`unknown client ${clientId}`);
+      // Not in the type definitions: signs the logout token with the provider's keys (iss, aud,
+      // iat, jti, events, sub, and sid when given; no nonce) and POSTs it.
+      await (client as unknown as { backchannelLogout(sub: string, sid?: string): Promise<void> }).backchannelLogout(
+        sub,
+        sid,
+      );
     },
   };
 }

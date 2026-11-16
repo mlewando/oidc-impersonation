@@ -95,4 +95,15 @@ describe.each(backends)('Store contract: %s', (_name, makeBackend) => {
     await advance(1.5);
     expect(await store.members('set')).toEqual([]);
   });
+
+  it('removes a member from a set', async () => {
+    await store.addToSet('shrink', 'a', 60);
+    await store.addToSet('shrink', 'b', 60);
+    await store.removeFromSet('shrink', 'a');
+    await store.removeFromSet('missing-set', 'a');
+
+    expect(await store.members('shrink')).toEqual(['b']);
+    await store.removeFromSet('shrink', 'b');
+    expect(await store.members('shrink')).toEqual([]);
+  });
 });

@@ -31,6 +31,7 @@ clients:
       - app.immich:///oauth-callback
     selectable_redirect_uris:
       - https://photos.e2e.test/auth/login
+    backchannel_logout_uri: https://photos.e2e.test/api/oauth/backchannel-logout
     targets:
       - id: family
         label: Family
@@ -40,6 +41,15 @@ clients:
           sub: e2e-family
           email: family@e2e.test
           name: Family
+      # A 2nd shared account with a session_ttl short enough to watch it end.
+      - id: brief
+        label: Brief visit
+        allowed_groups: [photos-family]
+        session_ttl: 8s
+        claims:
+          sub: e2e-brief
+          email: brief@e2e.test
+          name: Brief
       # Nobody in the test users may impersonate it; the tests post it anyway.
       - id: archive
         label: Archive

@@ -5,7 +5,7 @@ import { BlockList, isIP } from 'node:net';
  * 1 decision of the Bridge, attributed to the real person. Never carries tokens, codes, cookies or
  * secrets: only the fields below exist.
  */
-export type AuditEvent = SignInEvent;
+export type AuditEvent = SignInEvent | ImpersonationLogoutEvent;
 
 export interface SignInEvent {
   event: 'sign-in';
@@ -17,6 +17,18 @@ export interface SignInEvent {
   target?: string;
   result: 'ok' | 'not-allowed' | 'email-collides-with-target' | 'bad-csrf' | 'replay';
   ip: string;
+}
+
+/** The Bridge ending Impersonation sessions through back-channel logout (ADR 0003). */
+export interface ImpersonationLogoutEvent {
+  event: 'impersonation-logout';
+  client: string;
+  target: string;
+  /** For `ttl`: who opened the session. A `startup` logout covers every session of the Target. */
+  realUser?: string;
+  realSub?: string;
+  reason: 'ttl' | 'startup';
+  result: 'ok' | 'failed';
 }
 
 export interface AuditSink {

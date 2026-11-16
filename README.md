@@ -150,7 +150,7 @@ after at most `access_token_ttl` or 10 min, whichever is longer; nothing stays.
 | Listen | `port` (default `8080`). HTTPS when `tls` is configured, otherwise plain HTTP. |
 | Public URL | Its own host name, equal to `issuer`, which must be `https://` (only `http://localhost` is accepted, for development). |
 | Proxy headers | `X-Forwarded-Proto/Host/For` are trusted only from `trusted_proxies`. If that list is empty, they are ignored. |
-| Outbound | The Upstream provider (discovery, token, JWKS, userinfo), the Valkey store, and Client apps' back-channel logout URLs. |
+| Outbound | The Upstream provider (discovery, token, JWKS, userinfo), the Valkey store, and Client apps' back-channel logout URLs (private addresses are fine; the bridge only ever calls URLs from its config). |
 | Inbound | Browsers, plus Client app servers (discovery, token, JWKS, userinfo). |
 | Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. The image's built-in `HEALTHCHECK` runs `src/healthcheck.ts`, which reads only `port`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. |
 
@@ -372,8 +372,15 @@ cookies and secrets are never logged.
 | `sign-in` | `ok` (`identity`: `personal` or `impersonation`), `not-allowed` (a Target was posted that the person may not impersonate), `email-collides-with-target`, `bad-csrf`, `replay` |
 | `impersonation-logout` | `ok` or `failed`, with `reason`: `ttl` or `startup` |
 
+```json
+{"ts":"2026-11-13T17:12:44.301Z","event":"impersonation-logout","client":"immich","target":"family","realUser":"alice","realSub":"9f1c…","reason":"ttl","result":"ok"}
+```
+
 Fields: `realUser` is the real person's upstream `preferred_username`, `realSub` their upstream
-`sub`. `target` appears only for an impersonation. A `replay` line (a Client app redeemed an
+`sub`. `target` is the Target impersonated (`ok`), posted (`not-allowed`, only when it is a
+configured Target id) or collided with (`email-collides-with-target`). A `bad-csrf` line names no
+Target. An `impersonation-logout` with `reason: startup` ends every session of the Target, so it
+has no `realUser` or `realSub`. A `replay` line (a Client app redeemed an
 authorization code a 2nd time; the bridge rejects it and revokes what the code issued) comes from
 the app's server, so it has only `client` and `ip`.
 

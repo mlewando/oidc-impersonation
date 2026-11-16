@@ -5,7 +5,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import type { AuditSink } from './audit.ts';
-import { createBridge } from './bridge.ts';
+import { createBridge, type Bridge } from './bridge.ts';
 import type { BridgeConfig } from './config.ts';
 import { errorMessage } from './errors.ts';
 import type { Store } from './store.ts';
@@ -35,7 +35,7 @@ export interface RunningServer {
  */
 export async function startServer(config: BridgeConfig, deps: ServerDeps): Promise<RunningServer> {
   const retryMs = deps.discoveryRetryMs ?? 2_000;
-  let bridge: ((req: IncomingMessage, res: ServerResponse) => void) | undefined;
+  let bridge: Bridge | undefined;
   let stopped = false;
 
   const healthzAuthorized = basicAuthCheck(config.healthz.username, config.healthz.password);
@@ -61,7 +61,7 @@ export async function startServer(config: BridgeConfig, deps: ServerDeps): Promi
       res.writeHead(503, { 'content-type': 'text/plain', 'retry-after': '2' }).end('starting');
       return;
     }
-    bridge(req, res);
+    bridge.handle(req, res);
   };
 
   let retryTimer: NodeJS.Timeout | undefined;
@@ -70,7 +70,10 @@ export async function startServer(config: BridgeConfig, deps: ServerDeps): Promi
       await deps.store.ready();
       const upstream = await deps.discover();
       if (stopped) return;
-      bridge = createBridge(config, { upstream, audit: deps.audit, store: deps.store });
+      const created = createBridge(config, { upstream, audit: deps.audit, store: deps.store, log: deps.log });
+      await created.start();
+      if (stopped) return created.stop();
+      bridge = created;
       deps.log(`store reachable and upstream discovery succeeded (${config.upstream.issuer}); ready`);
     } catch (error) {
       if (stopped) return;
@@ -100,6 +103,7 @@ export async function startServer(config: BridgeConfig, deps: ServerDeps): Promi
     async close() {
       stopped = true;
       clearTimeout(retryTimer);
+      bridge?.stop();
       stopWatching();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

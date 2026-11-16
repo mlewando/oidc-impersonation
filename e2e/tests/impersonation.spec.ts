@@ -23,7 +23,7 @@ test('an allowed person picks Family, lands in its account, and is back in her o
   await page.waitForURL((url) => url.origin === BRIDGE_URL);
   await expect(page.getByText('Signed in as Alice (alice@e2e.test)')).toBeVisible();
   await expect(page.getByLabel('Alice (yourself)')).toBeChecked();
-  await expect(page.getByRole('radio')).toHaveCount(2); // herself and Family
+  await expect(page.getByRole('radio')).toHaveCount(3); // herself, Family, Brief visit; not Archive
   await chooseAccount(page, 'Family');
 
   // Immich auto-registers the Family account on its 1st sign-in, from exactly the Target's claims.
