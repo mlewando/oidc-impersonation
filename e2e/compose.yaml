@@ -65,14 +65,16 @@ services:
   bridge:
     build:
       context: ..
+    # As in production: the image's non-root user, nothing writable.
+    read_only: true
     environment:
       CONFIG_FILE: /config/config.yaml
       NODE_EXTRA_CA_CERTS: /certs/ca.crt
     volumes:
       - ./bridge:/config:ro
       - *certs-volume
+    # The check itself comes from the image's HEALTHCHECK; only the timing is faster here.
     healthcheck:
-      test: [CMD, node, src/healthcheck.ts]
       interval: 2s
       start_period: 30s
     depends_on:

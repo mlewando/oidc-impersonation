@@ -117,9 +117,13 @@ lifetime.
 
 ### Image
 
-`ghcr.io/mlewando/oidc-impersonation:<version>`, built on each `vX.Y.Z` tag. Pin it by digest.
-- runs as non-root
-- works with a read-only root filesystem
+`ghcr.io/mlewando/oidc-impersonation:<version>`, built on each `vX.Y.Z` tag for `linux/amd64`
+and `linux/arm64`. Pin it by digest.
+- distroless Node 24 (no shell, no package manager)
+- runs as non-root (`nonroot`, uid 65532)
+- works with a read-only root filesystem (`read_only: true`); it writes nothing to disk
+- has a built-in `HEALTHCHECK` (`/nodejs/bin/node src/healthcheck.ts`, every 30s); `node` is not
+  on `PATH`, so use the full path if you override it
 - keeps no state of its own: everything it must remember between requests lives in **Valkey**
   (see [Store](#store)), so a restart drops nothing
 - needs no access to any app's database or admin API
@@ -148,7 +152,7 @@ after at most `access_token_ttl` or 10 min, whichever is longer; nothing stays.
 | Proxy headers | `X-Forwarded-Proto/Host/For` are trusted only from `trusted_proxies`. If that list is empty, they are ignored. |
 | Outbound | The Upstream provider (discovery, token, JWKS, userinfo), the Valkey store, and Client apps' back-channel logout URLs. |
 | Inbound | Browsers, plus Client app servers (discovery, token, JWKS, userinfo). |
-| Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. For a container healthcheck, run `node src/healthcheck.ts` in the image: it reads only `port`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. |
+| Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. The image's built-in `HEALTHCHECK` runs `src/healthcheck.ts`, which reads only `port`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. |
 
 #### Use HTTPS on every hop
 
@@ -444,7 +448,8 @@ traces, the bridge's log) land in `e2e/results/`.
 
 - `auth.e2e.test`: Authelia 4.39.x, file users `alice` and `bob` (password `e2e-password`),
   `one_factor`.
-- `id.e2e.test`: the bridge, built from this repo, with config in `e2e/bridge/`.
+- `id.e2e.test`: the bridge, built from this repo's `Dockerfile` (the release image) and run with
+  a read-only root filesystem, with config in `e2e/bridge/`.
 - `store.e2e.test`: the bridge's own Valkey, over TLS with a password.
 - `photos.e2e.test`: Immich 3.x behind a TLS proxy, with OAuth configured through its config file.
 - A setup container generates a throwaway CA, 1 certificate per host and the signing keys. Immich
@@ -458,7 +463,12 @@ Options:
 - `IMMICH_OAUTH=direct` points Immich straight at Authelia, without the bridge (used to compare
   `sub` values).
 
-Release: push a `vX.Y.Z` tag. CI runs the tests and publishes the image to GHCR.
+### CI and release
+
+- `.github/workflows/ci.yml` runs on every push to a branch: typecheck, unit tests,
+  `pnpm test:valkey` and `pnpm e2e`. E2e results are uploaded as an artifact when it fails.
+- Release: push a `vX.Y.Z` tag. `.github/workflows/release.yml` runs the same checks and, only if
+  all pass, publishes the image to GHCR as `<version>`.
 
 ## Compatibility
 
