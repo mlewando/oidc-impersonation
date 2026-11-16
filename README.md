@@ -11,8 +11,8 @@ a role account, inside any OIDC-capable app. They can return to their own accoun
 Apps are not modified. To them, the bridge is a normal OIDC provider, and an impersonation looks
 like an ordinary sign-in of the impersonated account.
 
-> **Status: design / pre-release.** This README is the deployment contract. Nothing below is
-> implemented yet.
+> **Status: pre-release.** Everything below is implemented and covered by the e2e stack (real
+> Authelia and Immich); no version has been released yet. This README is the deployment contract.
 
 - Glossary: [`CONTEXT.md`](CONTEXT.md)
 - Decisions: [`docs/adr/`](docs/adr/)
@@ -302,7 +302,8 @@ started again.
 ## Example: Immich + Authelia
 
 Household members impersonate a shared **Family** Immich account, for example to clean up
-duplicates in Immich's own UI. Full files will live in `examples/immich-authelia/` *(planned)*.
+duplicates in Immich's own UI. The full files are in
+[`examples/immich-authelia/`](examples/immich-authelia/).
 
 **Bridge config** (the parts that differ from the generic example):
 

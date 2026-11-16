@@ -1,0 +1,16 @@
+# Immich 3.x OAuth settings for oidc-impersonation. Either set them under Administration →
+# Settings → OAuth, or merge this into the file IMMICH_CONFIG_FILE points at (the UI is then
+# read-only for these settings).
+oauth:
+  enabled: true
+  issuerUrl: https://id.example.org
+  clientId: immich
+  clientSecret: <contents of /run/secrets/immich-client-secret>
+  scope: openid email profile
+  signingAlgorithm: RS256
+  tokenEndpointAuthMethod: client_secret_post
+  autoRegister: true
+  buttonText: Login with OAuth
+  # Leave roleClaim as it is: the bridge never sends role claims.
+  # The phone app uses app.immich:///oauth-callback, already in the bridge's redirect_uris.
+  mobileOverrideEnabled: false

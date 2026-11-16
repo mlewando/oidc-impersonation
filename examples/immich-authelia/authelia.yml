@@ -1,0 +1,23 @@
+# Authelia 4.39.x: the client for oidc-impersonation. Merge into your configuration.yml.
+# Upstream groups decide who may impersonate: add household members to `photos-family`.
+identity_providers:
+  oidc:
+    clients:
+      - client_id: oidc-impersonation
+        client_name: Photos account switch
+        # Hash the secret from /run/secrets/upstream-client-secret:
+        #   authelia crypto hash generate pbkdf2 --variant sha512 --password '<secret>'
+        client_secret: '<hash of the upstream client secret>'
+        public: false
+        authorization_policy: two_factor
+        consent_mode: implicit
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - https://id.example.org/callback
+        scopes: [openid, profile, email, groups]
+        grant_types: [authorization_code]
+        response_types: [code]
+        token_endpoint_auth_method: client_secret_basic
+        # No sector_identifier_uri: the `sub` must equal what Immich got from Authelia directly,
+        # or existing Immich users won't match.

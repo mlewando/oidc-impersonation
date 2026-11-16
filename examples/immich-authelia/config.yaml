@@ -1,0 +1,52 @@
+# oidc-impersonation config for Immich behind Authelia: household members in `photos-family`
+# may impersonate the shared Family account. Replace every example.org host name and every
+# `<…>` value; secrets are read from the files named here (README: Configuration).
+issuer: https://id.example.org
+port: 8443
+tls:
+  cert_file: /run/secrets/tls.crt
+  key_file: /run/secrets/tls.key
+trusted_proxies: []
+
+signing_key_file: /run/secrets/signing-key.pem   # openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072
+cookie_secret_file: /run/secrets/cookie-secret   # openssl rand -base64 48
+access_token_ttl: 10m
+
+store:
+  url: rediss://valkey.example.org:6379/0
+  username: oidc-impersonation
+  password_file: /run/secrets/valkey-password
+
+healthz:
+  username: probe
+  password_file: /run/secrets/healthz-password
+
+upstream:
+  issuer: https://auth.example.org               # Authelia 4.39.x; client in authelia.yml
+  client_id: oidc-impersonation
+  client_secret_file: /run/secrets/upstream-client-secret
+  scopes: [openid, profile, email, groups]
+  groups_claim: groups
+
+clients:
+  - id: immich
+    secret_file: /run/secrets/immich-client-secret
+    token_endpoint_auth_method: client_secret_post
+    redirect_uris:
+      - https://photos.example.org/auth/login
+      - app.immich:///oauth-callback             # phone app
+      # Never add /user-settings (Immich's account linking): README "Client app requirements".
+    selectable_redirect_uris:
+      - https://photos.example.org/auth/login    # web sign-in only; phones never impersonate
+    backchannel_logout_uri: https://photos.example.org/api/oauth/backchannel-logout
+    targets:
+      - id: family
+        label: Family
+        allowed_groups: [photos-family]
+        session_ttl: 8h
+        claims:
+          # The Family user's oauthId in Immich (Administration → Users, or GET /api/admin/users).
+          # If Family never signed in with OAuth, pick any stable value and set it as its oauthId.
+          sub: <Family user's oauthId>
+          email: family@example.org
+          name: Family
