@@ -12,10 +12,12 @@
     "start": "node src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:valkey": "sh scripts/test-valkey.sh",
     "e2e": "sh e2e/run.sh"
   },
   "dependencies": {
     "@koa/router": "15.7.1",
+    "ioredis": "6.0.0",
     "koa": "3.3.0",
     "oidc-provider": "9.14.0",
     "openid-client": "6.8.9",

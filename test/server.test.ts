@@ -7,7 +7,8 @@ import { connect } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import { jsonLinesAuditSink } from '../src/audit.ts';
 import type { BridgeConfig } from '../src/config.ts';
-import { startServer, type RunningServer } from '../src/server.ts';
+import { startServer, type RunningServer, type ServerDeps } from '../src/server.ts';
+import { memoryStore } from '../src/store.ts';
 import type { Upstream } from '../src/upstream.ts';
 
 const signingKeyPem = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -21,6 +22,9 @@ function baseConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
     trustedProxies: [],
     signingKeyPem,
     cookieSecret: 'c'.repeat(32),
+    accessTokenTtl: 600,
+    store: { url: 'redis://unused', keyPrefix: 'test:' }, // the tests pass a memory store
+    healthz: { username: 'probe', password: 'probe-password-123' },
     upstream: { issuer: 'https://sso.example.org', clientId: 'b', clientSecret: 's', scopes: ['openid'], groupsClaim: 'groups' },
     clients: [
       {
@@ -44,7 +48,27 @@ const fakeUpstream: Upstream = {
   },
 };
 
-const silentAudit = jsonLinesAuditSink({ write: () => {} });
+/** Working server deps; each test overrides only what it is about. */
+function baseDeps(overrides: Partial<ServerDeps> = {}): ServerDeps {
+  return {
+    discover: async () => fakeUpstream,
+    audit: jsonLinesAuditSink({ write: () => {} }),
+    store: memoryStore(),
+    log: () => {},
+    ...overrides,
+  };
+}
+
+function basic(username: string, password: string) {
+  return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+}
+
+const PROBE_AUTH = basic('probe', 'probe-password-123');
+
+/** `/healthz` with the probe's credentials, other ones, or none (`null`). */
+function healthz(server: RunningServer, authorization: string | null = PROBE_AUTH) {
+  return fetch(`${server.url}/healthz`, authorization ? { headers: { authorization } } : {});
+}
 
 let running: RunningServer | undefined;
 afterEach(async () => {
@@ -64,37 +88,61 @@ describe('/healthz', () => {
   it('is not ready while upstream discovery fails, and 200 once it succeeds', async () => {
     let attempts = 0;
     let upstreamUp = false;
-    running = await startServer(baseConfig(), {
-      discover: async () => {
-        attempts++;
-        if (!upstreamUp) throw new Error('ECONNREFUSED');
-        return fakeUpstream;
-      },
-      audit: silentAudit,
-      log: () => {},
-      discoveryRetryMs: 10,
-    });
-    const healthz = () => fetch(`${running!.url}/healthz`);
+    const server = (running = await startServer(
+      baseConfig(),
+      baseDeps({
+        discover: async () => {
+          attempts++;
+          if (!upstreamUp) throw new Error('ECONNREFUSED');
+          return fakeUpstream;
+        },
+        discoveryRetryMs: 10,
+      }),
+    ));
 
     await until(async () => attempts >= 2);
-    expect((await healthz()).status).toBe(503);
+    expect((await healthz(server)).status).toBe(503);
     // Nothing else is served before the Bridge is ready.
-    expect((await fetch(`${running.url}/.well-known/openid-configuration`)).status).toBe(503);
+    expect((await fetch(`${server.url}/.well-known/openid-configuration`)).status).toBe(503);
 
     upstreamUp = true;
-    await until(async () => (await healthz()).status === 200);
-    expect((await fetch(`${running.url}/.well-known/openid-configuration`)).status).toBe(200);
+    await until(async () => (await healthz(server)).status === 200);
+    expect((await fetch(`${server.url}/.well-known/openid-configuration`)).status).toBe(200);
+  });
+
+  it('is 503 while the store is unreachable', async () => {
+    let storeUp = true;
+    const store = memoryStore();
+    const server = (running = await startServer(
+      baseConfig(),
+      baseDeps({ store: { ...store, ready: async () => (storeUp ? undefined : Promise.reject(new Error('down'))) } }),
+    ));
+    await until(async () => (await healthz(server)).status === 200);
+
+    storeUp = false;
+    expect((await healthz(server)).status).toBe(503);
+  });
+
+  it.each([
+    ['no credentials', null],
+    ['a wrong password', basic('probe', 'wrong')],
+    ['a wrong username', basic('someone', 'probe-password-123')],
+    ['another scheme', 'Bearer probe-password-123'],
+  ])('answers 401 to %s, without revealing readiness', async (_label, authorization) => {
+    const server = (running = await startServer(baseConfig(), baseDeps()));
+    await until(async () => (await healthz(server)).ok);
+
+    const res = await healthz(server, authorization);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBe('Basic realm="healthz", charset="UTF-8"');
+    expect(await res.text()).not.toMatch(/ok|ready/i);
   });
 });
 
 describe('without tls', () => {
   it('serves plain HTTP and warns at startup', async () => {
     const logs: string[] = [];
-    running = await startServer(baseConfig(), {
-      discover: async () => fakeUpstream,
-      audit: silentAudit,
-      log: (line) => logs.push(line),
-    });
+    running = await startServer(baseConfig(), baseDeps({ log: (line) => logs.push(line) }));
 
     expect(running.url).toMatch(/^http:\/\//);
     expect(logs.join('\n')).toMatch(/WARNING: .*plain HTTP/);
@@ -136,7 +184,7 @@ describe('with tls', () => {
         issuer: 'https://localhost:0',
         tls: { certFile, keyFile, cert: await readFile(certFile, 'utf8'), key: await readFile(keyFile, 'utf8') },
       }),
-      { discover: async () => fakeUpstream, audit: silentAudit, log: (l) => logs.push(l), tlsPollMs: 20 },
+      baseDeps({ log: (l) => logs.push(l), tlsPollMs: 20 }),
     );
     expect(running.url).toMatch(/^https:\/\//);
     expect(await servedCertificateCn(running.port)).toBe('CN=first');
@@ -162,7 +210,7 @@ describe('with tls', () => {
         issuer: 'https://localhost:0',
         tls: { certFile, keyFile, cert: await readFile(certFile, 'utf8'), key: await readFile(keyFile, 'utf8') },
       }),
-      { discover: async () => fakeUpstream, audit: silentAudit, log: (l) => logs.push(l), tlsPollMs: 20 },
+      baseDeps({ log: (l) => logs.push(l), tlsPollMs: 20 }),
     );
 
     await writeFile(certFile, 'not a certificate');

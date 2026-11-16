@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http';
 import { BlockList, isIP } from 'node:net';
 
 /**
@@ -54,6 +55,16 @@ export function clientIp(peer: string, forwardedFor: string | undefined, trusted
     if (!isTrusted(trusted, hop)) return hop;
   }
   return hops[0] ?? peerIp;
+}
+
+/** `clientIp` for an incoming request. */
+export function requestIp(req: IncomingMessage, trustedProxies: string[]): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  return clientIp(
+    req.socket.remoteAddress ?? '',
+    Array.isArray(forwarded) ? forwarded.join(',') : forwarded,
+    trustedProxies,
+  );
 }
 
 const blockLists = new Map<string, BlockList>();

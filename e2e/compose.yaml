@@ -2,6 +2,9 @@
 # Run it with `pnpm e2e` from the repo root. Everything here is throwaway test material.
 name: oidc-impersonation-e2e
 
+# Pinned once; Immich's Valkey, the Bridge's Valkey and `pnpm test:valkey` all use it.
+x-valkey-image: &valkey-image docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+
 x-certs: &certs-volume
   type: volume
   source: certs
@@ -32,6 +35,33 @@ services:
       default:
         aliases: [auth.e2e.test]
 
+  # The Bridge's own Valkey (not shared with Immich's), over TLS with the password the Bridge reads
+  # from the same secret file.
+  store:
+    image: *valkey-image
+    command:
+      - sh
+      - -c
+      - >-
+        exec valkey-server --port 0 --tls-port 6379
+        --tls-cert-file /certs/store.e2e.test.chain.crt --tls-key-file /certs/store.e2e.test.key
+        --tls-ca-cert-file /certs/ca.crt --tls-auth-clients no
+        --requirepass "$$(cat /run/valkey-password)"
+    volumes:
+      - *certs-volume
+      - ./bridge/secrets/valkey-password:/run/valkey-password:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$$(cat /run/valkey-password)" valkey-cli --tls --cacert /certs/ca.crt -h store.e2e.test ping | grep -q PONG
+      interval: 2s
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases: [store.e2e.test]
+
   bridge:
     build:
       context: ..
@@ -50,6 +80,8 @@ services:
         condition: service_completed_successfully
       authelia:
         condition: service_healthy
+      store:
+        condition: service_healthy
     networks:
       default:
         aliases: [id.e2e.test]
@@ -65,7 +97,7 @@ services:
     shm_size: 128mb
 
   redis:
-    image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+    image: *valkey-image
     healthcheck:
       test: redis-cli ping | grep -q PONG || exit 1
       interval: 2s

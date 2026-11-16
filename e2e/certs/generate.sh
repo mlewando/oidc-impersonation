@@ -13,7 +13,7 @@ apk add --no-cache openssl >/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=e2e test CA" \
   -keyout "$out/ca.key" -out "$out/ca.crt" 2>/dev/null
 
-for host in auth.e2e.test id.e2e.test photos.e2e.test; do
+for host in auth.e2e.test id.e2e.test photos.e2e.test store.e2e.test; do
   openssl req -newkey rsa:2048 -nodes -subj "/CN=$host" \
     -keyout "$out/$host.key" -out "$out/$host.csr" 2>/dev/null
   printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$host" > "$out/$host.ext"

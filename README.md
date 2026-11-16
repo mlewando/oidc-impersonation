@@ -106,8 +106,9 @@ logout**, the bridge ends impersonation sessions itself
 - after the Target's `session_ttl`, the bridge POSTs a signed logout token to the app. If the POST
   fails, it retries for about 10 min, then gives up and logs `failed`; the session then lasts as
   long as the app keeps it.
-- on startup (state is in memory only), it sends 1 logout per Target by the Target's `sub`, which
-  ends all impersonation sessions of that Target
+- on startup, it sends 1 logout per Target by the Target's `sub`, which ends all impersonation
+  sessions of that Target *(to be revisited now that state lives in Valkey, see
+  [ADR 0005](docs/adr/0005-state-in-valkey.md))*
 
 Personal sessions are never limited. Apps without back-channel logout keep their own session
 lifetime.
@@ -119,9 +120,24 @@ lifetime.
 `ghcr.io/mlewando/oidc-impersonation:<version>`, built on each `vX.Y.Z` tag. Pin it by digest.
 - runs as non-root
 - works with a read-only root filesystem
-- keeps all state in memory, so run exactly **1 instance**; a restart only drops sign-ins in
-  progress and ends impersonation sessions (see above)
+- keeps no state of its own: everything it must remember between requests lives in **Valkey**
+  (see [Store](#store)), so a restart drops nothing
 - needs no access to any app's database or admin API
+
+### Store
+
+The bridge keeps its state in Valkey (Redis works too)
+([ADR 0005](docs/adr/0005-state-in-valkey.md)): authorization codes, access tokens, grants,
+sign-ins in progress, and the identity issued by each sign-in. Every entry expires on its own,
+after at most `access_token_ttl` or 10 min, whichever is longer; nothing stays.
+
+- Give the bridge **its own** Valkey, or at least its own ACL user and `key_prefix`. Don't share
+  it with an app: its entries let whoever reads them redeem codes and tokens.
+- Connect over TLS (`rediss://`) with a password (`password_file`), even on a private network.
+  A private CA goes in `NODE_EXTRA_CA_CERTS`.
+- Persistence (RDB/AOF) is optional. Without it, a Valkey restart drops sign-ins in progress.
+  With it, those entries are written to Valkey's disk; protect that disk like a secret.
+- The bridge starts without Valkey and retries; `/healthz` stays `503` while Valkey is unreachable.
 
 ### Network
 
@@ -130,9 +146,9 @@ lifetime.
 | Listen | `port` (default `8080`). HTTPS when `tls` is configured, otherwise plain HTTP. |
 | Public URL | Its own host name, equal to `issuer`, which must be `https://` (only `http://localhost` is accepted, for development). |
 | Proxy headers | `X-Forwarded-Proto/Host/For` are trusted only from `trusted_proxies`. If that list is empty, they are ignored. |
-| Outbound | The Upstream provider (discovery, token, JWKS, userinfo) and Client apps' back-channel logout URLs. |
+| Outbound | The Upstream provider (discovery, token, JWKS, userinfo), the Valkey store, and Client apps' back-channel logout URLs. |
 | Inbound | Browsers, plus Client app servers (discovery, token, JWKS, userinfo). |
-| Health | `GET /healthz` returns `200` once config is valid and upstream discovery succeeded. Until then the bridge listens but answers `503` on every route, and retries discovery every 2 s. For a container healthcheck, run `node src/healthcheck.ts` in the image. |
+| Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. For a container healthcheck, run `node src/healthcheck.ts` in the image: it reads only `port`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. |
 
 #### Use HTTPS on every hop
 
@@ -171,12 +187,16 @@ for example `clients[1].id: duplicate client id "my-app"`), and refuses to start
 - a client that mixes a custom-scheme redirect URI (a phone app) with a non-loopback `http://` one;
   use `https://` for the web URIs
 - a `backchannel_logout_uri` that isn't an http(s) URL
+- an `access_token_ttl` outside 1 min–24 h, or not written like `90s`, `10m` or `8h`
+- a `store.url` that isn't `redis://` or `rediss://`, or that contains credentials
+- no `healthz` credentials, a `healthz.username` containing `:`, or a healthz password shorter
+  than 16 characters
 
 Targets belong to a client, so each app has its own set of accounts that may be impersonated.
 
-Defaults: `port` 8080, `trusted_proxies` empty, upstream `scopes` `[openid, profile, email]`,
-`groups_claim` `groups`, `token_endpoint_auth_method` `client_secret_basic`,
-`selectable_redirect_uris` empty.
+Defaults: `port` 8080, `trusted_proxies` empty, `access_token_ttl` `10m`, `store.key_prefix`
+`oidc-impersonation:`, upstream `scopes` `[openid, profile, email]`, `groups_claim` `groups`,
+`token_endpoint_auth_method` `client_secret_basic`, `selectable_redirect_uris` empty.
 
 ```yaml
 issuer: https://id.example.org          # public URL of the bridge
@@ -188,6 +208,17 @@ trusted_proxies: []                     # IPs/CIDRs allowed to set X-Forwarded-*
 
 signing_key_file: /run/secrets/signing-key.pem   # RSA private key, RS256, published via JWKS
 cookie_secret_file: /run/secrets/cookie-secret   # 32 bytes or more of random data
+access_token_ttl: 10m                   # how long apps may call userinfo after a sign-in; 1m–24h
+
+store:                                  # Valkey (or Redis); see "Store"
+  url: rediss://valkey.example.org:6379/0   # rediss:// = TLS; no credentials in the URL
+  username: oidc-impersonation          # optional ACL user
+  password_file: /run/secrets/valkey-password   # optional
+  key_prefix: "oidc-impersonation:"     # every key starts with this
+
+healthz:                                # HTTP basic auth for GET /healthz
+  username: probe
+  password_file: /run/secrets/healthz-password   # 16 characters or more
 
 upstream:
   issuer: https://sso.example.org
@@ -352,7 +383,7 @@ adds to the header itself are ignored. Otherwise `ip` is the connecting address.
   - exact redirect URI match
   - short-lived (60 s), single-use codes; a reused code is rejected, revokes what it issued, and
     is audited as `replay`
-  - access tokens live 10 min and are only good for userinfo
+  - access tokens live `access_token_ttl` (default 10 min) and are only good for userinfo
   - `state` and `nonce` validated
   - audience restricted per client
   - RS256 ID tokens through JWKS (the only signing algorithm advertised)
@@ -397,7 +428,8 @@ The stack is TypeScript (strict), Node 24, pnpm, Koa,
 ```sh
 pnpm install
 pnpm typecheck
-pnpm test     # unit tests, no network
+pnpm test     # unit tests, no network (the store tests run against an in-memory store)
+pnpm test:valkey   # the store tests against a throwaway Valkey container
 pnpm e2e      # Docker Compose e2e: real Authelia ⇄ bridge ⇄ real Immich, driven by Playwright
 pnpm dev      # run locally; CONFIG_FILE points at your config
 ```
@@ -413,6 +445,7 @@ traces, the bridge's log) land in `e2e/results/`.
 - `auth.e2e.test`: Authelia 4.39.x, file users `alice` and `bob` (password `e2e-password`),
   `one_factor`.
 - `id.e2e.test`: the bridge, built from this repo, with config in `e2e/bridge/`.
+- `store.e2e.test`: the bridge's own Valkey, over TLS with a password.
 - `photos.e2e.test`: Immich 3.x behind a TLS proxy, with OAuth configured through its config file.
 - A setup container generates a throwaway CA, 1 certificate per host and the signing keys. Immich
   and the bridge trust the CA through `NODE_EXTRA_CA_CERTS`.

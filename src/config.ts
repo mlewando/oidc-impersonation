@@ -3,6 +3,7 @@ import { readFile as fsReadFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { errorMessage } from './errors.ts';
 
 export interface ClientConfig {
   id: string;
@@ -20,6 +21,10 @@ export interface BridgeConfig {
   trustedProxies: string[];
   signingKeyPem: string;
   cookieSecret: string;
+  /** Seconds an access token issued to a Client app stays valid (it is only good for userinfo). */
+  accessTokenTtl: number;
+  store: StoreConfig;
+  healthz: HealthzConfig;
   upstream: {
     issuer: string;
     clientId: string;
@@ -30,26 +35,66 @@ export interface BridgeConfig {
   clients: ClientConfig[];
 }
 
+/** The Valkey (or Redis) the Bridge keeps its state in (ADR 0005). */
+export interface StoreConfig {
+  /** `redis://` or `rediss://` (TLS) URL, without credentials. */
+  url: string;
+  username?: string;
+  password?: string;
+  /** Prepended to every key, so 1 Valkey can be shared safely. */
+  keyPrefix: string;
+}
+
+/** Basic-auth credentials `/healthz` requires. */
+export interface HealthzConfig {
+  username: string;
+  password: string;
+}
+
+/** The part of the config the container healthcheck needs. */
+export interface ProbeConfig {
+  port: number;
+  tls: boolean;
+  healthz: HealthzConfig;
+}
+
 export type ReadFile = (path: string) => Promise<string>;
 
 export type ConfigResult = { ok: true; config: BridgeConfig } | { ok: false; errors: string[] };
 
-function buildSchema(readFile: ReadFile) {
-  /** A `*_file` key: validated as a path, replaced by the file's content. */
-  const secretFile = (opts: { trim: boolean }) =>
-    z.string().transform(async (path, ctx) => {
-      try {
-        const content = opts.trim ? (await readFile(path)).trim() : await readFile(path);
-        if (!content.trim()) {
-          ctx.addIssue({ code: 'custom', message: `${path} is empty` });
-          return z.NEVER;
-        }
-        return content;
-      } catch (error) {
-        ctx.addIssue({ code: 'custom', message: `cannot read ${path} (${errorMessage(error)})` });
+/** A `*_file` key: validated as a path, replaced by the file's content. */
+function secretFile(readFile: ReadFile, opts: { trim: boolean }) {
+  return z.string().transform(async (path, ctx) => {
+    try {
+      const content = opts.trim ? (await readFile(path)).trim() : await readFile(path);
+      if (!content.trim()) {
+        ctx.addIssue({ code: 'custom', message: `${path} is empty` });
         return z.NEVER;
       }
-    });
+      return content;
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: `cannot read ${path} (${errorMessage(error)})` });
+      return z.NEVER;
+    }
+  });
+}
+
+const port = z.number().int().min(1).max(65535).default(8080);
+
+function healthzSchema(readFile: ReadFile) {
+  return z
+    .strictObject({
+      username: z.string().min(1).refine((u) => !u.includes(':'), 'must not contain ":"'),
+      password_file: secretFile(readFile, { trim: true }).refine(
+        (p) => p.length >= 16,
+        'must contain a password of 16 characters or more',
+      ),
+    })
+    .transform((h): HealthzConfig => ({ username: h.username, password: h.password_file }));
+}
+
+function buildSchema(readFile: ReadFile) {
+  const secret = (opts: { trim: boolean }) => secretFile(readFile, opts);
 
   const tls = z
     .strictObject({ cert_file: z.string(), key_file: z.string() })
@@ -68,7 +113,7 @@ function buildSchema(readFile: ReadFile) {
   const client = z
     .strictObject({
       id: z.string().min(1),
-      secret_file: secretFile({ trim: true }),
+      secret_file: secret({ trim: true }),
       token_endpoint_auth_method: z.enum(['client_secret_basic', 'client_secret_post']).default('client_secret_basic'),
       redirect_uris: z.array(redirectUri).min(1),
       selectable_redirect_uris: z.array(z.string()).default([]),
@@ -105,18 +150,33 @@ function buildSchema(readFile: ReadFile) {
   return z
     .strictObject({
       issuer: z.string().refine(isAllowedIssuer, 'must be an https:// URL (http:// only for localhost)'),
-      port: z.number().int().min(1).max(65535).default(8080),
+      port,
       tls: tls.optional(),
       trusted_proxies: z.array(z.string().refine(isIpOrCidr, 'must be an IP address or CIDR range')).default([]),
-      signing_key_file: secretFile({ trim: false }).refine(isRsaPrivateKey, 'must be a PEM RSA private key'),
-      cookie_secret_file: secretFile({ trim: true }).refine(
+      signing_key_file: secret({ trim: false }).refine(isRsaPrivateKey, 'must be a PEM RSA private key'),
+      cookie_secret_file: secret({ trim: true }).refine(
         (s) => Buffer.byteLength(s) >= 32,
         'must contain 32 bytes or more of random data',
       ),
+      access_token_ttl: duration({ min: 60, max: 24 * 3600 }).default(600),
+      store: z.strictObject({
+        url: z.string().superRefine((value, ctx) => {
+          const url = URL.parse(value);
+          if (!url || !['redis:', 'rediss:'].includes(url.protocol)) {
+            ctx.addIssue({ code: 'custom', message: 'must be a redis:// or rediss:// (TLS) URL' });
+          } else if (url.username || url.password) {
+            ctx.addIssue({ code: 'custom', message: 'must not contain credentials; use username and password_file' });
+          }
+        }),
+        username: z.string().min(1).optional(),
+        password_file: secret({ trim: true }).optional(),
+        key_prefix: z.string().default('oidc-impersonation:'),
+      }),
+      healthz: healthzSchema(readFile),
       upstream: z.strictObject({
         issuer: z.string(),
         client_id: z.string(),
-        client_secret_file: secretFile({ trim: true }),
+        client_secret_file: secret({ trim: true }),
         scopes: z
           .array(z.string())
           .default(['openid', 'profile', 'email'])
@@ -144,6 +204,14 @@ function buildSchema(readFile: ReadFile) {
         trustedProxies: raw.trusted_proxies,
         signingKeyPem: raw.signing_key_file,
         cookieSecret: raw.cookie_secret_file,
+        accessTokenTtl: raw.access_token_ttl,
+        store: {
+          url: raw.store.url,
+          ...(raw.store.username !== undefined && { username: raw.store.username }),
+          ...(raw.store.password_file !== undefined && { password: raw.store.password_file }),
+          keyPrefix: raw.store.key_prefix,
+        },
+        healthz: raw.healthz,
         upstream: {
           issuer: raw.upstream.issuer,
           clientId: raw.upstream.client_id,
@@ -182,12 +250,43 @@ export async function loadConfig(path: string): Promise<BridgeConfig> {
   return result.config;
 }
 
+/**
+ * Reads only what the container healthcheck needs (port, whether TLS is on, `/healthz`
+ * credentials), with the same rules as the full config. It reads no other secret file, so a
+ * rotating signing key or client secret can't make a running Bridge look unhealthy.
+ */
+export async function loadProbeConfig(path: string): Promise<ProbeConfig> {
+  const readFile: ReadFile = (p) => fsReadFile(p, 'utf8');
+  const schema = z.object({ port, tls: z.unknown().optional(), healthz: healthzSchema(readFile) });
+  const parsed = await schema.safeParseAsync(parse(await readFile(path)));
+  if (!parsed.success) {
+    throw new ConfigError(path, parsed.error.issues.map((i) => `${formatPath(i.path)}: ${i.message}`));
+  }
+  return { port: parsed.data.port, tls: parsed.data.tls !== undefined, healthz: parsed.data.healthz };
+}
+
 export class ConfigError extends Error {
   readonly errors: string[];
   constructor(path: string, errors: string[]) {
     super(`Invalid config ${path}:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
     this.errors = errors;
   }
+}
+
+/** `90s`, `10m`, `8h` → seconds, within [min, max] seconds. */
+function duration(bounds: { min: number; max: number }) {
+  return z.string().transform((value, ctx) => {
+    const match = /^(\d+)(s|m|h)$/.exec(value);
+    const seconds = match ? Number(match[1]) * { s: 1, m: 60, h: 3600 }[match[2] as 's' | 'm' | 'h'] : NaN;
+    if (!(seconds >= bounds.min && seconds <= bounds.max)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `must be a duration like 90s, 10m or 8h, between ${bounds.min}s and ${bounds.max}s`,
+      });
+      return z.NEVER;
+    }
+    return seconds;
+  });
 }
 
 const redirectUri = z.string().superRefine((value, ctx) => {
@@ -229,10 +328,6 @@ function isRsaPrivateKey(pem: string) {
   } catch {
     return false;
   }
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function formatPath(path: PropertyKey[]) {

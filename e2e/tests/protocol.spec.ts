@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import * as oidc from 'openid-client';
-import { auditLinesSince, bridgeStdout, waitForAuditLine } from './bridge-output.ts';
+import { auditLinesSince, bridgeStdout, waitForAuditLine } from './bridge-container.ts';
 import { BRIDGE_URL, loginAtAuthelia } from './stack.ts';
 
 // Drives the Bridge as a plain OIDC client (`e2e-rp`, client_secret_basic) to check the protocol

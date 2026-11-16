@@ -14,6 +14,9 @@ const files: Record<string, string> = {
   '/s/app-secret': 'app-secret\n',
   '/s/tls.crt': 'CERT',
   '/s/tls.key': 'KEY',
+  '/s/valkey-password': 'valkey-password\n',
+  '/s/healthz-password': 'healthz-password-0123\n',
+  '/s/short-password': 'too-short\n',
 };
 
 const readFile = async (path: string) => {
@@ -31,6 +34,15 @@ tls:
 trusted_proxies: [10.0.0.1, 192.168.0.0/16, "::1"]
 signing_key_file: /s/signing-key.pem
 cookie_secret_file: /s/cookie-secret
+access_token_ttl: 5m
+store:
+  url: rediss://valkey.example.org:6379/2
+  username: bridge
+  password_file: /s/valkey-password
+  key_prefix: "bridge:"
+healthz:
+  username: probe
+  password_file: /s/healthz-password
 upstream:
   issuer: https://sso.example.org
   client_id: oidc-impersonation
@@ -76,6 +88,14 @@ describe('parseConfig', () => {
         trustedProxies: ['10.0.0.1', '192.168.0.0/16', '::1'],
         signingKeyPem: signingKey,
         cookieSecret: 'c'.repeat(32),
+        accessTokenTtl: 300,
+        store: {
+          url: 'rediss://valkey.example.org:6379/2',
+          username: 'bridge',
+          password: 'valkey-password',
+          keyPrefix: 'bridge:',
+        },
+        healthz: { username: 'probe', password: 'healthz-password-0123' },
         upstream: {
           issuer: 'https://sso.example.org',
           clientId: 'oidc-impersonation',
@@ -102,6 +122,10 @@ describe('parseConfig', () => {
       delete raw.port;
       delete raw.tls;
       delete raw.trusted_proxies;
+      delete raw.access_token_ttl;
+      delete raw.store.username;
+      delete raw.store.password_file;
+      delete raw.store.key_prefix;
       delete raw.upstream.scopes;
       delete raw.upstream.groups_claim;
       delete raw.clients[0].token_endpoint_auth_method;
@@ -110,7 +134,8 @@ describe('parseConfig', () => {
     });
 
     if (!result.ok) throw new Error(result.errors.join('\n'));
-    expect(result.config).toMatchObject({ port: 8080, trustedProxies: [] });
+    expect(result.config).toMatchObject({ port: 8080, trustedProxies: [], accessTokenTtl: 600 });
+    expect(result.config.store).toEqual({ url: 'rediss://valkey.example.org:6379/2', keyPrefix: 'oidc-impersonation:' });
     expect(result.config.tls).toBeUndefined();
     expect(result.config.upstream).toMatchObject({ scopes: ['openid', 'profile', 'email'], groupsClaim: 'groups' });
     expect(result.config.clients[0]).toMatchObject({
@@ -163,6 +188,48 @@ describe('parseConfig', () => {
       ]),
     );
   });
+
+  it.each([
+    ['90s', 90],
+    ['10m', 600],
+    ['1h', 3600],
+  ])('reads access_token_ttl %s as %i seconds', async (value, seconds) => {
+    const result = await parseWith((raw) => (raw.access_token_ttl = value));
+    expect(result.ok && result.config.accessTokenTtl).toBe(seconds);
+  });
+
+  it.each(['30s', '25h', '10', '10 minutes', '-5m'])('rejects access_token_ttl %s', async (value) => {
+    expect(await errorsOf((raw) => (raw.access_token_ttl = value))).toEqual([
+      expect.stringMatching(/^access_token_ttl: /),
+    ]);
+  });
+
+  it('requires healthz credentials', async () => {
+    expect(await errorsOf((raw) => delete raw.healthz)).toEqual([expect.stringMatching(/^healthz: /)]);
+  });
+
+  it('rejects a healthz password shorter than 16 characters', async () => {
+    expect(await errorsOf((raw) => (raw.healthz.password_file = '/s/short-password'))).toEqual([
+      expect.stringMatching(/^healthz\.password_file: .*16 characters/),
+    ]);
+  });
+
+  it('rejects a healthz username containing ":"', async () => {
+    expect(await errorsOf((raw) => (raw.healthz.username = 'a:b'))).toEqual([
+      expect.stringMatching(/^healthz\.username: /),
+    ]);
+  });
+
+  it('requires a store', async () => {
+    expect(await errorsOf((raw) => delete raw.store)).toEqual([expect.stringMatching(/^store: /)]);
+  });
+
+  it.each(['https://valkey.example.org', 'valkey.example.org:6379', 'redis://user:secret@valkey.example.org'])(
+    'rejects store url %s',
+    async (url) => {
+      expect(await errorsOf((raw) => (raw.store.url = url))).toEqual([expect.stringMatching(/^store\.url: /)]);
+    },
+  );
 
   it('rejects malformed YAML', async () => {
     const result = await parseConfig('issuer: [unclosed', readFile);

@@ -8,6 +8,14 @@ tls:
 signing_key_file: /certs/bridge-signing-key.pem
 cookie_secret_file: /config/secrets/cookie-secret
 
+store:
+  url: rediss://store.e2e.test:6379
+  password_file: /config/secrets/valkey-password
+
+healthz:
+  username: probe
+  password_file: /config/secrets/healthz-password
+
 upstream:
   issuer: https://auth.e2e.test:9091
   client_id: oidc-impersonation

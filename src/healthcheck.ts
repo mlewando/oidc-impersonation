@@ -1,24 +1,30 @@
 // Container healthcheck: exits 0 when the Bridge's own `/healthz` answers 200, otherwise 1.
-// It only asks the local listener whether it is ready, so it skips certificate verification
-// (the certificate is issued for the public host name, not for 127.0.0.1).
+// It reads only the part of the config it needs (port, tls, healthz credentials) and only asks the
+// local listener, so it skips certificate verification (the certificate names the public host,
+// not 127.0.0.1).
 //
 //   node src/healthcheck.ts
-import { readFile } from 'node:fs/promises';
 import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
-import { parse } from 'yaml';
+import { loadProbeConfig } from './config.ts';
+import { errorMessage } from './errors.ts';
 
-const raw = parse(await readFile(process.env.CONFIG_FILE ?? '/config/config.yaml', 'utf8')) ?? {};
-const port = typeof raw.port === 'number' ? raw.port : 8080;
-const get = raw.tls ? httpsGet : httpGet;
-const url = `${raw.tls ? 'https' : 'http'}://127.0.0.1:${port}/healthz`;
-
-const req = get(url, { rejectUnauthorized: false, timeout: 3_000 }, (res) => {
-  res.resume();
-  process.exit(res.statusCode === 200 ? 0 : 1);
-});
-req.on('timeout', () => req.destroy(new Error('timeout')));
-req.on('error', (error) => {
-  console.error(`healthcheck: ${error.message}`);
+const fail = (error: unknown) => {
+  console.error(`healthcheck: ${errorMessage(error)}`);
   process.exit(1);
-});
+};
+
+const config = await loadProbeConfig(process.env.CONFIG_FILE ?? '/config/config.yaml').catch(fail);
+const get = config.tls ? httpsGet : httpGet;
+const url = `${config.tls ? 'https' : 'http'}://127.0.0.1:${config.port}/healthz`;
+
+const req = get(
+  url,
+  { auth: `${config.healthz.username}:${config.healthz.password}`, rejectUnauthorized: false, timeout: 3_000 },
+  (res) => {
+    res.resume();
+    process.exit(res.statusCode === 200 ? 0 : 1);
+  },
+);
+req.on('timeout', () => req.destroy(new Error('timeout')));
+req.on('error', fail);

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import * as oidc from 'openid-client';
+import { HEALTHZ_AUTH } from './bridge-container.ts';
 import { AUTHELIA_URL, BRIDGE_URL, loginAtAuthelia } from './stack.ts';
 
 // The Bridge's provider side, locked down to the README's security model.
@@ -82,6 +83,11 @@ test('discovery advertises only what the Bridge supports', async ({ request }) =
     expect(meta, endpoint).not.toHaveProperty(endpoint);
   }
   expect(meta).not.toHaveProperty('dpop_signing_alg_values_supported');
+});
+
+test('/healthz needs its basic-auth credentials', async ({ request }) => {
+  expect((await request.get(`${BRIDGE_URL}/healthz`)).status()).toBe(401);
+  expect((await request.get(`${BRIDGE_URL}/healthz`, { headers: { authorization: HEALTHZ_AUTH } })).status()).toBe(200);
 });
 
 test('disabled endpoints are not reachable', async ({ request }) => {

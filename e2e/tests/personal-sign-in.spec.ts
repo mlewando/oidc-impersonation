@@ -6,7 +6,7 @@ import {
   loginAtAuthelia,
   startImmichOAuthLogin,
 } from './stack.ts';
-import { waitForAuditLine } from './bridge-output.ts';
+import { waitForAuditLine } from './bridge-container.ts';
 
 test('a real person signs in to Immich through the Bridge and lands in their own account', async ({ page }) => {
   const since = new Date(Date.now() - 1000);
