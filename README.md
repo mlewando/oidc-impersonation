@@ -122,8 +122,9 @@ lifetime.
 
 ### Image
 
-`ghcr.io/mlewando/oidc-impersonation:<version>`, built on each `vX.Y.Z` tag for `linux/amd64`
-and `linux/arm64`. Pin it by digest.
+`ghcr.io/mlewando/oidc-impersonation:<version>` (also `<major>.<minor>` and `sha-<commit>`),
+built on each `vX.Y.Z` tag for `linux/amd64` and `linux/arm64`. Pin it by digest: each GitHub
+Release names its image's digest.
 - distroless Node 24 (no shell, no package manager)
 - runs as non-root (`nonroot`, uid 65532)
 - works with a read-only root filesystem (`read_only: true`); it writes nothing to disk
@@ -515,11 +516,12 @@ removes the stack. It shares its Compose project with `pnpm e2e`, which tears it
 - `.github/workflows/ci.yml` runs on every push to a branch: typecheck, unit tests,
   `pnpm test:valkey` and `pnpm e2e`. E2e results are uploaded as an artifact when it fails.
 - Release: push a `vX.Y.Z` tag. `.github/workflows/release.yml` runs the same checks and, only if
-  all pass, publishes the image to GHCR as `<version>`.
+  all pass, publishes the image to GHCR and creates a GitHub Release for the tag. The notes hold
+  the Compatibility table below, the commits since the previous tag, and the image's digest.
 
 ## Compatibility
 
 | Component | Tested version |
 |---|---|
-| Immich | 3.x (exact version recorded at `v0.1.0`) |
-| Authelia | 4.39.x |
+| Immich | 3.4.1 |
+| Authelia | 4.39.28 |
