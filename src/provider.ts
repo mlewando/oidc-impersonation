@@ -8,7 +8,7 @@ import Provider, {
 import type { IdentityClaims } from './claims.ts';
 import type { BridgeConfig } from './config.ts';
 import { storeAdapter } from './oidc-adapter.ts';
-import { escapeHtml, PAGE_HEADERS } from './selection-page.ts';
+import { errorPage, PAGE_HEADERS } from './pages.ts';
 import type { Store } from './store.ts';
 
 /** Seconds a sign-in may take: the Bridge's login step, upstream round trip included. */
@@ -202,13 +202,11 @@ function noBridgeSessionPolicy() {
   return policy;
 }
 
-/** Minimal error page: the OAuth error code and description, HTML-escaped, nothing else. */
+/** Minimal error page: the OAuth error code and description, nothing else. */
 function renderError(ctx: KoaContextWithOIDC, out: ErrorOut) {
   ctx.set(PAGE_HEADERS);
   ctx.type = 'html';
-  ctx.body = `<!doctype html><meta charset="utf-8"><title>Sign-in error</title>
-<h1>Sign-in error</h1><p><strong>${escapeHtml(out.error)}</strong>: ${escapeHtml(out.error_description)}</p>
-<p>Start again from the app.</p>`;
+  ctx.body = errorPage(String(out.error), out.error_description);
 }
 
 function signingJwk(pem: string) {

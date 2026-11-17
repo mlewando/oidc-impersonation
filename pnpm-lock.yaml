@@ -11,6 +11,9 @@ importers:
       '@koa/router':
         specifier: 15.7.1
         version: 15.7.1(koa@3.3.0)
+      hono:
+        specifier: 4.13.19
+        version: 4.13.19
       ioredis:
         specifier: 6.0.0
         version: 6.0.0
@@ -496,6 +499,10 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  hono@4.13.19:
+    resolution: {integrity: sha512-KmXvQAXwcAHV+muzbIwoJ23niEB5nMoDVr9WcRkU8mvjUECm/1+7v4Jgp7P7a+H6MLFrh+vXrGonGrGS+RQfkA==}
+    engines: {node: '>=16.9.0'}
 
   http-assert@1.5.0:
     resolution: {integrity: sha512-uPpH7OKX4H25hBmU6G1jWNaqJGpTXxey+YOUizJUAgu0AjLUeC8D73hTrhvDS5D+GJN1DN1+hhc/eF/wpxtp0w==}
@@ -1178,6 +1185,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  hono@4.13.19: {}
 
   http-assert@1.5.0:
     dependencies:

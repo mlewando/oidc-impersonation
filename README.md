@@ -87,8 +87,8 @@ To impersonate a Target, or to stop, log out of the app with its own button and 
   client **and** the redirect URI is listed as selectable. Otherwise they get their Personal
   identity silently. For example, keep phone-app redirect URIs out of the selectable list so
   phones never impersonate.
-- **What it takes:** the Personal identity is preselected, and only a click issues a Target
-  identity. The click is a form POST with a CSRF token, under `frame-ancestors 'none'`. A link
+- **What it takes:** each account is a card with its name, its email and a **Log in** button;
+  the Personal identity comes first. Only a click on a Target's button issues a Target identity. The click is a form POST with a CSRF token, under `frame-ancestors 'none'`. A link
   alone can never start an impersonation.
 - **Who may impersonate a Target:** that comes from the upstream groups claim, matched against
   the Target's allowed groups. There is no user allowlist in the bridge.
@@ -457,7 +457,14 @@ pnpm test     # unit tests, no network (the store tests run against an in-memory
 pnpm test:valkey   # the store tests against a throwaway Valkey container
 pnpm e2e      # Docker Compose e2e: real Authelia ⇄ bridge ⇄ real Immich, driven by Playwright
 pnpm dev      # run locally; CONFIG_FILE points at your config
+pnpm preview  # the bridge's pages with sample data at http://localhost:4173, live reload
+pnpm stack    # the e2e stack in your own browser (see below)
 ```
+
+The bridge's pages (Account selection, refusals, errors) are plain functions in `src/pages.ts`,
+built with Hono's escaping `html` tagged template (`hono/html`, wrapped in `src/html.ts`). `pnpm preview` renders each
+scenario in `preview/scenarios.ts` with the bridge's own security headers; saving a page reloads
+the browser. Add a scenario there for any state worth looking at; the unit tests render them all.
 
 The source runs directly on Node 24 (built-in TypeScript type stripping); there is no build step.
 

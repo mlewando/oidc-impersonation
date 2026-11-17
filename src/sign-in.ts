@@ -7,7 +7,7 @@ import type { BridgeConfig, ClientConfig } from './config.ts';
 import { errorMessage } from './errors.ts';
 import { choose, decide, realPerson, type Identity, type RealPerson } from './identity.ts';
 import { SIGN_IN_TTL, type BridgeProvider } from './provider.ts';
-import { messagePage, PAGE_HEADERS, selectionPage } from './selection-page.ts';
+import { expiredPage, PAGE_HEADERS, refusedPage, selectionPage, upstreamFailedPage } from './pages.ts';
 import type { Store } from './store.ts';
 import type { PendingUpstreamLogin, Upstream } from './upstream.ts';
 
@@ -40,9 +40,6 @@ interface Interaction {
   client: ClientConfig;
   redirectUri: string;
 }
-
-const EXPIRED ='This sign-in has expired or is unknown. Start again from the app.';
-const REFUSED = 'This sign-in was refused. Start again from the app, or ask your administrator.';
 
 /**
  * The Bridge's login step, run by oidc-provider on every authorization request (ADR 0002):
@@ -130,7 +127,7 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
   router.get('/callback', async (ctx) => {
     const state = typeof ctx.query.state === 'string' ? ctx.query.state : '';
     const sent = state ? await store.take<SentUpstream>(`signin:state:${state}`) : undefined;
-    if (!sent) return showPage(ctx, 400, messagePage('Sign-in expired', EXPIRED));
+    if (!sent) return showPage(ctx, 400, expiredPage());
 
     // Built from the configured issuer, never from request headers.
     const callbackUrl = new URL(`/callback?${ctx.querystring}`, config.issuer);
@@ -140,7 +137,7 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
       answered = { person: realPerson(upstreamClaims, config.upstream.groupsClaim) };
     } catch (error) {
       console.error(`upstream sign-in failed: ${errorMessage(error)}`);
-      return showPage(ctx, 400, messagePage('Sign-in failed', 'Sign-in with the upstream provider failed. Start again from the app.'));
+      return showPage(ctx, 400, upstreamFailedPage());
     }
     await store.set(`signin:result:${sent.interactionUid}`, answered, SIGN_IN_TTL);
 
@@ -156,7 +153,7 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
     if (!answered) {
       // A reload of the Account selection page shows it again, with the same CSRF token.
       const awaiting = await store.get<AwaitingChoice>(`signin:choice:${details.uid}`);
-      if (!awaiting) return showPage(ctx, 400, messagePage('Sign-in expired', EXPIRED));
+      if (!awaiting) return showPage(ctx, 400, expiredPage());
       return showChoice(ctx, current, awaiting);
     }
 
@@ -165,7 +162,7 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
     switch (decision.kind) {
       case 'refuse':
         audit(ctx, client, person, { result: decision.result, target: decision.target.id });
-        return showPage(ctx, 403, messagePage('Sign-in refused', REFUSED));
+        return showPage(ctx, 403, refusedPage());
       case 'issue':
         return issue(ctx, current, person, decision.identity);
       case 'choose': {
@@ -182,12 +179,12 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
     const form = await readForm(ctx.req);
     // Taken once: whatever is posted, this page can't be submitted again.
     const awaiting = await store.take<AwaitingChoice>(`signin:choice:${details.uid}`);
-    if (!awaiting) return showPage(ctx, 400, messagePage('Sign-in expired', EXPIRED));
+    if (!awaiting) return showPage(ctx, 400, expiredPage());
     const { person } = awaiting;
 
     if (!sameSecret(form.get('csrf') ?? '', awaiting.csrf)) {
       audit(ctx, client, person, { result: 'bad-csrf' });
-      return showPage(ctx, 403, messagePage('Sign-in refused', REFUSED));
+      return showPage(ctx, 403, refusedPage());
     }
 
     const posted = form.get('account') ?? '';
@@ -196,7 +193,7 @@ export function signInRoutes(config: BridgeConfig, deps: SignInDeps) {
       // Only a configured Target id is audited; anything else posted is not echoed.
       const target = client.targets.some((t) => t.id === posted) ? posted : undefined;
       audit(ctx, client, person, { result: choice.result, target });
-      return showPage(ctx, 403, messagePage('Sign-in refused', REFUSED));
+      return showPage(ctx, 403, refusedPage());
     }
     return issue(ctx, current, person, choice.identity);
   });

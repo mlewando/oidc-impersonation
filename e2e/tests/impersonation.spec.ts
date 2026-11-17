@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import * as oidc from 'openid-client';
 import { waitForAuditLine } from './bridge-container.ts';
 import {
+  accountButtons,
   BRIDGE_URL,
   chooseAccount,
   FAMILY_SUB,
@@ -20,11 +21,14 @@ test('an allowed person picks Family, lands in its account, and is back in her o
   await startImmichOAuthLogin(page);
   await loginAtAuthelia(page, 'alice');
 
-  // The Account selection page: who she is, herself preselected, only her allowed Targets.
+  // The Account selection page: who she is, herself first, then only her allowed Targets.
   await page.waitForURL((url) => url.origin === BRIDGE_URL);
   await expect(page.getByText('Signed in as Alice (alice@oidc-bridge.test)')).toBeVisible();
-  await expect(page.getByLabel('Alice (yourself)')).toBeChecked();
-  await expect(page.getByRole('radio')).toHaveCount(3); // herself, Family, Brief visit; not Archive
+  expect(await accountButtons(page)).toEqual([
+    'Log in as Alice (yourself)',
+    'Log in as Family',
+    'Log in as Brief visit', // not Archive
+  ]);
   await chooseAccount(page, 'Family');
 
   // Immich auto-registers the Family account on its 1st sign-in, from exactly the Target's claims.
@@ -65,8 +69,8 @@ test('the upstream account that is a Target signs in as itself, and still sees t
   await loginAtAuthelia(page, 'family'); // its sub is the Family Target's
 
   // Family is not listed as a Target: it is this account's own identity.
-  await expect(page.getByLabel('Family (yourself)')).toBeChecked();
-  await expect(page.getByRole('radio')).toHaveCount(2); // itself and Brief visit
+  await page.waitForURL((url) => url.origin === BRIDGE_URL);
+  expect(await accountButtons(page)).toEqual(['Log in as Family (yourself)', 'Log in as Brief visit']);
   await chooseAccount(page, 'Family (yourself)');
 
   const user = await immichSignedInUser(page);

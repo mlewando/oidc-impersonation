@@ -24,8 +24,14 @@ export async function loginAtAuthelia(page: Page, username: string) {
 /** Waits for the Bridge's Account selection page and continues as the account labelled `label`. */
 export async function chooseAccount(page: Page, label: string | RegExp) {
   await page.waitForURL((url) => url.origin === BRIDGE_URL && url.pathname.endsWith('/finish'));
-  await page.getByLabel(label).check();
-  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: typeof label === 'string' ? `Log in as ${label}` : label, exact: true }).click();
+}
+
+/** The accounts on the Account selection page, in order, by their buttons' accessible names. */
+export async function accountButtons(page: Page) {
+  const buttons = page.getByRole('button', { name: /^Log in as / });
+  await buttons.first().waitFor();
+  return buttons.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
 }
 
 /** Who Immich says is signed in with this browser context's cookies, or the HTTP status. */
