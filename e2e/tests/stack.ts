@@ -1,9 +1,11 @@
 import { expect, type Page } from '@playwright/test';
 
-export const IMMICH_URL = 'https://photos.e2e.test';
-export const AUTHELIA_URL = 'https://auth.e2e.test:9091';
-export const BRIDGE_URL = 'https://id.e2e.test:8443';
+export const IMMICH_URL = 'https://photos.oidc-bridge.test';
+export const AUTHELIA_URL = 'https://auth.oidc-bridge.test:9443';
+export const BRIDGE_URL = 'https://id.oidc-bridge.test:8443';
 export const PASSWORD = 'e2e-password';
+/** The Family Target's `sub`, which is also the `family` Authelia user's (e2e/compose.yaml). */
+export const FAMILY_SUB = '0f8a4c2e-5b1d-4e7a-9c3f-2d6b8e1a4f70';
 
 /** Starts Immich's OAuth sign-in from its login page. */
 export async function startImmichOAuthLogin(page: Page) {

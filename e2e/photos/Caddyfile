@@ -4,7 +4,7 @@
 	auto_https off
 }
 
-https://photos.e2e.test {
-	tls /certs/photos.e2e.test.chain.crt /certs/photos.e2e.test.key
+https://photos.oidc-bridge.test {
+	tls /certs/photos.oidc-bridge.test.chain.crt /certs/photos.oidc-bridge.test.key
 	reverse_proxy immich:2283
 }

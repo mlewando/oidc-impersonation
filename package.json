@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:valkey": "sh scripts/test-valkey.sh",
-    "e2e": "sh e2e/run.sh"
+    "e2e": "sh e2e/run.sh",
+    "stack": "sh scripts/manual-stack.sh"
   },
   "dependencies": {
     "@koa/router": "15.7.1",

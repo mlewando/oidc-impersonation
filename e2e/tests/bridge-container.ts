@@ -70,7 +70,7 @@ export async function restartBridge() {
  */
 export async function forgetSessionRegistry() {
   const command =
-    'REDISCLI_AUTH="$(cat /run/valkey-password)" valkey-cli --tls --cacert /certs/ca.crt -h store.e2e.test ' +
+    'REDISCLI_AUTH="$(cat /run/valkey-password)" valkey-cli --tls --cacert /certs/ca.crt -h store.oidc-bridge.test ' +
     'DEL oidc-impersonation:cap:registry';
   const exec = await dockerApi('POST', `/containers/${STORE_CONTAINER}/exec`, {
     Cmd: ['sh', '-c', command],

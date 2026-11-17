@@ -12,5 +12,5 @@ test('a sign-in started before a Bridge restart finishes after it', async ({ pag
 
   await loginAtAuthelia(page, 'bob');
   const user = await immichSignedInUser(page);
-  expect(user.email).toBe('bob@e2e.test');
+  expect(user.email).toBe('bob@oidc-bridge.test');
 });

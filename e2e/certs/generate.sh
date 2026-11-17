@@ -10,15 +10,15 @@ fi
 
 apk add --no-cache openssl >/dev/null
 
-openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=e2e test CA" \
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=e2e test CA" \
   -keyout "$out/ca.key" -out "$out/ca.crt" 2>/dev/null
 
-for host in auth.e2e.test id.e2e.test photos.e2e.test store.e2e.test; do
+for host in auth.oidc-bridge.test id.oidc-bridge.test photos.oidc-bridge.test store.oidc-bridge.test; do
   openssl req -newkey rsa:2048 -nodes -subj "/CN=$host" \
     -keyout "$out/$host.key" -out "$out/$host.csr" 2>/dev/null
   printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$host" > "$out/$host.ext"
   openssl x509 -req -in "$out/$host.csr" -CA "$out/ca.crt" -CAkey "$out/ca.key" \
-    -CAcreateserial -days 2 -extfile "$out/$host.ext" -out "$out/$host.crt" 2>/dev/null
+    -CAcreateserial -days 30 -extfile "$out/$host.ext" -out "$out/$host.crt" 2>/dev/null
   cat "$out/$host.crt" "$out/ca.crt" > "$out/$host.chain.crt"
   rm "$out/$host.csr" "$out/$host.ext"
 done

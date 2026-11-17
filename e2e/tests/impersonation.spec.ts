@@ -4,6 +4,7 @@ import { waitForAuditLine } from './bridge-container.ts';
 import {
   BRIDGE_URL,
   chooseAccount,
+  FAMILY_SUB,
   IMMICH_URL,
   immichSignedInUser,
   loginAtAuthelia,
@@ -21,14 +22,14 @@ test('an allowed person picks Family, lands in its account, and is back in her o
 
   // The Account selection page: who she is, herself preselected, only her allowed Targets.
   await page.waitForURL((url) => url.origin === BRIDGE_URL);
-  await expect(page.getByText('Signed in as Alice (alice@e2e.test)')).toBeVisible();
+  await expect(page.getByText('Signed in as Alice (alice@oidc-bridge.test)')).toBeVisible();
   await expect(page.getByLabel('Alice (yourself)')).toBeChecked();
   await expect(page.getByRole('radio')).toHaveCount(3); // herself, Family, Brief visit; not Archive
   await chooseAccount(page, 'Family');
 
   // Immich auto-registers the Family account on its 1st sign-in, from exactly the Target's claims.
   const family = await immichSignedInUser(page);
-  expect(family).toMatchObject({ email: 'family@e2e.test', name: 'Family', oauthId: 'e2e-family' });
+  expect(family).toMatchObject({ email: 'family@oidc-bridge.test', name: 'Family', oauthId: FAMILY_SUB });
 
   const audit = await waitForAuditLine(since, (l) => l.event === 'sign-in' && l.identity === 'impersonation');
   expect(audit).toEqual({
@@ -54,8 +55,27 @@ test('an allowed person picks Family, lands in its account, and is back in her o
   await startImmichOAuthLogin(page);
   await chooseAccount(page, 'Alice (yourself)');
   const alice = await immichSignedInUser(page);
-  expect(alice.email).toBe('alice@e2e.test');
+  expect(alice.email).toBe('alice@oidc-bridge.test');
   expect(alice.oauthId).toBe(audit.realSub);
+});
+
+test('the upstream account that is a Target signs in as itself, and still sees the other Targets', async ({ page }) => {
+  const since = new Date(Date.now() - 1000);
+  await startImmichOAuthLogin(page);
+  await loginAtAuthelia(page, 'family'); // its sub is the Family Target's
+
+  // Family is not listed as a Target: it is this account's own identity.
+  await expect(page.getByLabel('Family (yourself)')).toBeChecked();
+  await expect(page.getByRole('radio')).toHaveCount(2); // itself and Brief visit
+  await chooseAccount(page, 'Family (yourself)');
+
+  const user = await immichSignedInUser(page);
+  expect(user).toMatchObject({ email: 'family@oidc-bridge.test', oauthId: FAMILY_SUB });
+  expect(await waitForAuditLine(since, (l) => l.event === 'sign-in' && l.realUser === 'family')).toMatchObject({
+    realSub: FAMILY_SUB,
+    identity: 'personal',
+    result: 'ok',
+  });
 });
 
 test('the Account selection page cannot be framed or cached', async ({ page }) => {

@@ -4,7 +4,7 @@ machineLearning:
   enabled: false
 oauth:
   enabled: true
-  issuerUrl: https://auth.e2e.test:9091
+  issuerUrl: https://auth.oidc-bridge.test:9443
   clientId: immich-direct
   clientSecret: e2e-immich-direct-client-secret
   scope: openid email profile

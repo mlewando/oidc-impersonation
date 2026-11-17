@@ -21,6 +21,16 @@ services:
 
   authelia:
     image: authelia/authelia:4.39.28
+    # Authelia gives each user a random `sub` on first use. Pin the `family` user's to the Family
+    # Target's `claims.sub` (e2e/bridge/config.yaml), as an operator would for a real shared account.
+    command:
+      - sh
+      - -c
+      - >-
+        authelia storage migrate up --config /config/configuration.yml >/dev/null &&
+        authelia storage user identifiers add family --identifier 0f8a4c2e-5b1d-4e7a-9c3f-2d6b8e1a4f70
+        --config /config/configuration.yml &&
+        exec authelia --config /config/configuration.yml
     environment:
       X_AUTHELIA_CONFIG_FILTERS: template
     volumes:
@@ -33,7 +43,7 @@ services:
         condition: service_completed_successfully
     networks:
       default:
-        aliases: [auth.e2e.test]
+        aliases: [auth.oidc-bridge.test]
 
   # The Bridge's own Valkey (not shared with Immich's), over TLS with the password the Bridge reads
   # from the same secret file.
@@ -44,7 +54,7 @@ services:
       - -c
       - >-
         exec valkey-server --port 0 --tls-port 6379
-        --tls-cert-file /certs/store.e2e.test.chain.crt --tls-key-file /certs/store.e2e.test.key
+        --tls-cert-file /certs/store.oidc-bridge.test.chain.crt --tls-key-file /certs/store.oidc-bridge.test.key
         --tls-ca-cert-file /certs/ca.crt --tls-auth-clients no
         --requirepass "$$(cat /run/valkey-password)"
     volumes:
@@ -53,14 +63,14 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - REDISCLI_AUTH="$$(cat /run/valkey-password)" valkey-cli --tls --cacert /certs/ca.crt -h store.e2e.test ping | grep -q PONG
+        - REDISCLI_AUTH="$$(cat /run/valkey-password)" valkey-cli --tls --cacert /certs/ca.crt -h store.oidc-bridge.test ping | grep -q PONG
       interval: 2s
     depends_on:
       certs:
         condition: service_completed_successfully
     networks:
       default:
-        aliases: [store.e2e.test]
+        aliases: [store.oidc-bridge.test]
 
   bridge:
     build:
@@ -86,7 +96,7 @@ services:
         condition: service_healthy
     networks:
       default:
-        aliases: [id.e2e.test]
+        aliases: [id.oidc-bridge.test]
 
   database:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
@@ -139,7 +149,7 @@ services:
         condition: service_healthy
     networks:
       default:
-        aliases: [photos.e2e.test]
+        aliases: [photos.oidc-bridge.test]
 
   e2e:
     build:

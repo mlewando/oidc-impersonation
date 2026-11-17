@@ -5,7 +5,7 @@ import { AUTHELIA_URL, BRIDGE_URL, loginAtAuthelia } from './stack.ts';
 
 // The Bridge's provider side, locked down to the README's security model.
 
-const RP_CALLBACK = 'http://rp.e2e.test/callback';
+const RP_CALLBACK = 'http://rp.oidc-bridge.test/callback';
 
 async function discoverRp() {
   return oidc.discovery(new URL(BRIDGE_URL), 'e2e-rp', undefined, oidc.ClientSecretBasic('e2e-rp-client-secret'));

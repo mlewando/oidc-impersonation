@@ -6,7 +6,7 @@ import { chooseAccount, immichMe, immichSignedInUser, loginAtAuthelia, startImmi
 // test keeps 2 browsers open: Alice impersonating a Target, and Bob signed in as himself.
 
 async function signedIn(browser: Browser, user: string, account?: string) {
-  const page = await (await browser.newContext({ ignoreHTTPSErrors: true, baseURL: 'https://photos.e2e.test' })).newPage();
+  const page = await (await browser.newContext({ ignoreHTTPSErrors: true, baseURL: 'https://photos.oidc-bridge.test' })).newPage();
   await startImmichOAuthLogin(page);
   await loginAtAuthelia(page, user);
   if (account) await chooseAccount(page, account);
@@ -23,10 +23,10 @@ test('after its session_ttl, Immich drops the Impersonation session and keeps th
   const since = new Date(Date.now() - 1000);
   const alice = await signedIn(browser, 'alice', 'Brief visit'); // session_ttl: 8s
   const bob = await signedIn(browser, 'bob');
-  expect(await immichMe(alice)).toMatchObject({ email: 'brief@e2e.test' });
+  expect(await immichMe(alice)).toMatchObject({ email: 'brief@oidc-bridge.test' });
 
   await expectSignedOut(alice, 20_000);
-  expect(await immichMe(bob)).toMatchObject({ email: 'bob@e2e.test' });
+  expect(await immichMe(bob)).toMatchObject({ email: 'bob@oidc-bridge.test' });
   expect(await waitForAuditLine(since, (l) => l.event === 'impersonation-logout' && l.reason === 'ttl')).toEqual({
     ts: expect.any(String),
     event: 'impersonation-logout',
@@ -45,7 +45,7 @@ test('a Bridge restart keeps Impersonation sessions open: their logouts resume f
 
   await restartBridge();
 
-  expect(await immichMe(alice)).toMatchObject({ email: 'family@e2e.test' });
+  expect(await immichMe(alice)).toMatchObject({ email: 'family@oidc-bridge.test' });
   const startupLogouts = (l: { event: string; reason?: unknown }) => l.event === 'impersonation-logout' && l.reason === 'startup';
   await expect(waitForAuditLine(since, startupLogouts, 3_000)).rejects.toThrow();
 });
@@ -61,7 +61,7 @@ test('if the store lost the registry, a restart logs out every Target by sub and
   await restartBridge();
 
   await expectSignedOut(alice, 20_000);
-  expect(await immichMe(bob)).toMatchObject({ email: 'bob@e2e.test' });
+  expect(await immichMe(bob)).toMatchObject({ email: 'bob@oidc-bridge.test' });
   expect(await waitForAuditLine(since, (l) => l.reason === 'startup' && l.target === 'family')).toEqual({
     ts: expect.any(String),
     event: 'impersonation-logout',

@@ -1,15 +1,15 @@
 # Bridge config for the e2e stack. Secrets are test-only.
-issuer: https://id.e2e.test:8443
+issuer: https://id.oidc-bridge.test:8443
 port: 8443
 tls:
-  cert_file: /certs/id.e2e.test.chain.crt
-  key_file: /certs/id.e2e.test.key
+  cert_file: /certs/id.oidc-bridge.test.chain.crt
+  key_file: /certs/id.oidc-bridge.test.key
 
 signing_key_file: /certs/bridge-signing-key.pem
 cookie_secret_file: /config/secrets/cookie-secret
 
 store:
-  url: rediss://store.e2e.test:6379
+  url: rediss://store.oidc-bridge.test:6379
   password_file: /config/secrets/valkey-password
 
 healthz:
@@ -17,7 +17,7 @@ healthz:
   password_file: /config/secrets/healthz-password
 
 upstream:
-  issuer: https://auth.e2e.test:9091
+  issuer: https://auth.oidc-bridge.test:9443
   client_id: oidc-impersonation
   client_secret_file: /config/secrets/upstream-client-secret
   scopes: [openid, profile, email, groups]
@@ -27,19 +27,19 @@ clients:
     secret_file: /config/secrets/immich-client-secret
     token_endpoint_auth_method: client_secret_post
     redirect_uris:
-      - https://photos.e2e.test/auth/login
+      - https://photos.oidc-bridge.test/auth/login
       - app.immich:///oauth-callback
     selectable_redirect_uris:
-      - https://photos.e2e.test/auth/login
-    backchannel_logout_uri: https://photos.e2e.test/api/oauth/backchannel-logout
+      - https://photos.oidc-bridge.test/auth/login
+    backchannel_logout_uri: https://photos.oidc-bridge.test/api/oauth/backchannel-logout
     targets:
       - id: family
         label: Family
         allowed_groups: [photos-family]
         session_ttl: 1h
         claims:
-          sub: e2e-family
-          email: family@e2e.test
+          sub: 0f8a4c2e-5b1d-4e7a-9c3f-2d6b8e1a4f70   # also the `family` Authelia user's sub (e2e/compose.yaml)
+          email: family@oidc-bridge.test
           name: Family
       # A 2nd shared account with a session_ttl short enough to watch it end.
       - id: brief
@@ -48,7 +48,7 @@ clients:
         session_ttl: 8s
         claims:
           sub: e2e-brief
-          email: brief@e2e.test
+          email: brief@oidc-bridge.test
           name: Brief
       # Nobody in the test users may impersonate it; the tests post it anyway.
       - id: archive
@@ -56,10 +56,10 @@ clients:
         allowed_groups: [photos-archive]
         claims:
           sub: e2e-archive
-          email: archive@e2e.test
+          email: archive@oidc-bridge.test
   # A plain OIDC client the e2e tests drive directly to check the protocol.
   - id: e2e-rp
     secret_file: /config/secrets/e2e-rp-client-secret
     token_endpoint_auth_method: client_secret_basic
     redirect_uris:
-      - http://rp.e2e.test/callback
+      - http://rp.oidc-bridge.test/callback

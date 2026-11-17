@@ -1,0 +1,11 @@
+# Publishes the e2e stack on 127.0.0.1 so you can click through it in your own browser.
+# Use it through `pnpm stack` (scripts/manual-stack.sh), which also needs this /etc/hosts line:
+#   127.0.0.1 auth.oidc-bridge.test id.oidc-bridge.test photos.oidc-bridge.test
+# The host ports equal the ports in the stack's URLs, so no config changes.
+services:
+  authelia:
+    ports: ['127.0.0.1:9443:9443']
+  bridge:
+    ports: ['127.0.0.1:8443:8443']
+  photos:
+    ports: ['127.0.0.1:443:443']

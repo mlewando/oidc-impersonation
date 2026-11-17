@@ -2,17 +2,24 @@
 users:
   alice:
     displayname: Alice
-    email: alice@e2e.test
+    email: alice@oidc-bridge.test
     password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
     groups: [photos-family]
   bob:
     displayname: Bob
-    email: bob@e2e.test
+    email: bob@oidc-bridge.test
     password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
     groups: []
+  # The Family account itself: its sub is pinned to the Family Target's (e2e/compose.yaml), so
+  # signing in as it is a Personal sign-in into Family, not an Impersonation.
+  family:
+    displayname: Family
+    email: family@oidc-bridge.test
+    password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
+    groups: [photos-family]
   # A misconfigured account: its email is the Family Target's (README: email-collides-with-target).
   mallory:
     displayname: Mallory
-    email: family@e2e.test
+    email: family@oidc-bridge.test
     password: '$argon2id$v=19$m=65536,t=3,p=4$Od9TSpRArubPcbg+z++F8w$njCrvNXbWt4kMAXvseMFSBuuuK/I3+DypCv/7vbm53w'
     groups: []

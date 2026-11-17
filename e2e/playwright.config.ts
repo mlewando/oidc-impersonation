@@ -10,7 +10,7 @@ export default defineConfig({
   timeout: 60_000,
   reporter: [['list'], ['html', { outputFolder: './results/report', open: 'never' }]],
   use: {
-    baseURL: 'https://photos.e2e.test',
+    baseURL: 'https://photos.oidc-bridge.test',
     ignoreHTTPSErrors: true, // the stack uses a throwaway test CA
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

@@ -23,7 +23,7 @@ test('a real person signs in to Immich through the Bridge and lands in their own
   await loginAtAuthelia(page, 'bob');
 
   const user = await immichSignedInUser(page);
-  expect(user.email).toBe('bob@e2e.test');
+  expect(user.email).toBe('bob@oidc-bridge.test');
   expect(user.name).toBe('Bob');
   expect(bridgePages, 'no Account selection page without allowed Targets').toEqual([]);
 
@@ -58,6 +58,6 @@ test('a 2nd sign-in reuses the Upstream session without a login prompt', async (
   await startImmichOAuthLogin(page);
   const user = await immichSignedInUser(page);
 
-  expect(user.email).toBe('bob@e2e.test');
+  expect(user.email).toBe('bob@oidc-bridge.test');
   expect(autheliaPages, 'Authelia must not show its login page again').toEqual([]);
 });

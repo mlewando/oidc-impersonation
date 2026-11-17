@@ -6,7 +6,7 @@ export default async function globalSetup() {
   const res = await fetch(`${IMMICH_URL}/api/auth/admin-sign-up`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@e2e.test', password: 'e2e-admin-password', name: 'Admin' }),
+    body: JSON.stringify({ email: 'admin@oidc-bridge.test', password: 'e2e-admin-password', name: 'Admin' }),
   });
   if (!res.ok && res.status !== 400) {
     throw new Error(`Immich admin sign-up failed: ${res.status} ${await res.text()}`);

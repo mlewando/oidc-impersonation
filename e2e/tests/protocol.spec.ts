@@ -6,7 +6,7 @@ import { BRIDGE_URL, loginAtAuthelia } from './stack.ts';
 // Drives the Bridge as a plain OIDC client (`e2e-rp`, client_secret_basic) to check the protocol
 // directly, without Immich in between.
 
-const RP_CALLBACK = 'http://rp.e2e.test/callback';
+const RP_CALLBACK = 'http://rp.oidc-bridge.test/callback';
 
 async function discoverRp() {
   return oidc.discovery(new URL(BRIDGE_URL), 'e2e-rp', undefined, oidc.ClientSecretBasic('e2e-rp-client-secret'));
@@ -14,7 +14,7 @@ async function discoverRp() {
 
 /**
  * Opens `authUrl` in the browser and returns the URL the Bridge finally redirects back to.
- * Nothing listens at rp.e2e.test: the request is only observed (Playwright can't route a request
+ * Nothing listens at rp.oidc-bridge.test: the request is only observed (Playwright can't route a request
  * that is the target of a redirect), and its failure doesn't matter.
  */
 async function followToRp(page: Page, authUrl: URL, opts: { login: boolean }) {
@@ -49,14 +49,14 @@ for (const [label, pkce] of [
 test('rejects a redirect URI the client did not register, without redirecting to it', async ({ page }) => {
   const rp = await discoverRp();
   const authUrl = oidc.buildAuthorizationUrl(rp, {
-    redirect_uri: 'http://evil.e2e.test/callback',
+    redirect_uri: 'http://evil.oidc-bridge.test/callback',
     scope: 'openid',
     code_challenge: await oidc.calculatePKCECodeChallenge(oidc.randomPKCECodeVerifier()),
     code_challenge_method: 'S256',
   });
   const leaked: string[] = [];
   page.on('request', (req) => {
-    if (req.url().startsWith('http://evil.e2e.test')) leaked.push(req.url());
+    if (req.url().startsWith('http://evil.oidc-bridge.test')) leaked.push(req.url());
   });
 
   const res = await page.goto(authUrl.href);
@@ -96,12 +96,12 @@ test('issues an RS256 ID token for the requesting client, bound to its nonce, wi
   const claims = tokens.claims()!;
   expect(claims.aud).toBe('e2e-rp');
   expect(claims.nonce).toBe(nonce);
-  expect(claims).toMatchObject({ email: 'alice@e2e.test', name: 'Alice', preferred_username: 'alice' });
+  expect(claims).toMatchObject({ email: 'alice@oidc-bridge.test', name: 'Alice', preferred_username: 'alice' });
 
   const userinfo = await oidc.fetchUserInfo(rp, tokens.access_token, claims.sub);
   expect(userinfo).toEqual({
     sub: claims.sub,
-    email: 'alice@e2e.test',
+    email: 'alice@oidc-bridge.test',
     name: 'Alice',
     preferred_username: 'alice',
   });

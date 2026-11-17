@@ -467,12 +467,16 @@ The source runs directly on Node 24 (built-in TypeScript type stripping); there 
 Playwright suite in a container on the same network, and tears everything down. Results (report,
 traces, the bridge's log) land in `e2e/results/`.
 
-- `auth.e2e.test`: Authelia 4.39.x, file users `alice` and `bob` (password `e2e-password`),
-  `one_factor`.
-- `id.e2e.test`: the bridge, built from this repo's `Dockerfile` (the release image) and run with
-  a read-only root filesystem, with config in `e2e/bridge/`.
-- `store.e2e.test`: the bridge's own Valkey, over TLS with a password.
-- `photos.e2e.test`: Immich 3.x behind a TLS proxy, with OAuth configured through its config file.
+- `auth.oidc-bridge.test:9443`: Authelia 4.39.x, `one_factor`, file users (password
+  `e2e-password`): `alice` (in `photos-family`), `bob` (no groups), `family` (the Family account
+  itself: its `sub` is pinned to the Family Target's at startup) and `mallory` (her email is the
+  Family Target's, her `sub` isn't).
+- `id.oidc-bridge.test:8443`: the bridge, built from this repo's `Dockerfile` (the release image)
+  and run with a read-only root filesystem, with config in `e2e/bridge/`. Immich's Targets:
+  Family (`session_ttl` 1 h), Brief visit (8 s), and Archive, which no test user may impersonate.
+- `store.oidc-bridge.test`: the bridge's own Valkey, over TLS with a password.
+- `photos.oidc-bridge.test`: Immich 3.x behind a TLS proxy, with OAuth configured through its
+  config file.
 - A setup container generates a throwaway CA, 1 certificate per host and the signing keys. Immich
   and the bridge trust the CA through `NODE_EXTRA_CA_CERTS`.
 - Besides `immich`, the bridge has a 2nd client, `e2e-rp`, which the tests drive directly with
@@ -483,6 +487,21 @@ Options:
 - `KEEP_STACK=1 pnpm e2e` leaves the stack running afterwards.
 - `IMMICH_OAUTH=direct` points Immich straight at Authelia, without the bridge (used to compare
   `sub` values).
+
+### Trying the stack in your own browser
+
+`pnpm stack` starts the same stack without the test runner and publishes it on 127.0.0.1
+(`e2e/compose.manual.yaml`: ports 443, 8443 and 9443). Once, add to `/etc/hosts`:
+
+```
+127.0.0.1 auth.oidc-bridge.test id.oidc-bridge.test photos.oidc-bridge.test
+```
+
+Then open `https://photos.oidc-bridge.test` → "Login with OAuth" and sign in as `alice`, `bob`,
+`family` or `mallory`. The certificates come from the stack's throwaway CA: accept the browser warning, or
+trust `e2e/results/ca.crt`, which the script copies out (a new CA is made each time the stack is
+created). The audit log: `docker logs -f oidc-impersonation-e2e-bridge-1`. `pnpm stack down`
+removes the stack. It shares its Compose project with `pnpm e2e`, which tears it down.
 
 ### CI and release
 
