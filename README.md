@@ -157,12 +157,30 @@ registry's marker 30 days after the bridge last ran.
 
 | | |
 |---|---|
-| Listen | `port` (default `8080`). HTTPS when `tls` is configured, otherwise plain HTTP. |
+| Listen | `port` (default `8080`) on `listen_address` (default: every interface). HTTPS when `tls` is configured, otherwise plain HTTP. See [Listen address](#listen-address). |
 | Public URL | Its own host name, equal to `issuer`, which must be `https://` (only `http://localhost` is accepted, for development). |
 | Proxy headers | `X-Forwarded-Proto/Host/For` are trusted only from `trusted_proxies`. If that list is empty, they are ignored. |
 | Outbound | The Upstream provider (discovery, token, JWKS, userinfo), the Valkey store, and Client apps' back-channel logout URLs (private addresses are fine; the bridge only ever calls URLs from its config). |
 | Inbound | Browsers, plus Client app servers (discovery, token, JWKS, userinfo). |
-| Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. The image's built-in `HEALTHCHECK` runs `src/healthcheck.ts`, which reads only `port`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. |
+| Health | `GET /healthz` with HTTP basic auth (`healthz` in the config; anything else gets `401` and learns nothing). Returns `200` once config is valid, Valkey answers and upstream discovery succeeded, and afterwards as long as Valkey answers. Until then the bridge listens but answers `503` on every route, and retries every 2 s. The image's built-in `HEALTHCHECK` runs `src/healthcheck.ts`, which reads only `port`, `listen_address`, `tls` and `healthz` from the same config file, so a secret being rotated never marks a running bridge unhealthy. It connects to `listen_address` (or to `127.0.0.1` when the bridge listens on every interface). |
+
+#### Listen address
+
+By default the bridge listens on every interface. Set `listen_address` to 1 IP address to listen
+on that address only, for example `127.0.0.1` or `::1` when a reverse proxy on the same host is
+the only client:
+
+- It must be an IP address, not a host name: `localhost`, `[::1]`, `127.0.0.1:8080` and zone ids
+  (`fe80::1%eth0`) are rejected. Only 1 address is supported.
+- Omit it for the default: dual-stack (`::`), or IPv4 only (`0.0.0.0`) on a host without IPv6.
+  An explicit address is never widened or replaced: `::` on a host without IPv6, or an address
+  the host does not have, stops the bridge at startup (exit code 1, 1 line on stderr). Use
+  `0.0.0.0` for IPv4 only.
+- **In a container, leave it unset or use `0.0.0.0`.** `127.0.0.1` inside a container is not
+  reachable through published ports (`-p`) or from other containers. To restrict who can reach the
+  bridge, publish the port on the host's loopback instead (`-p 127.0.0.1:8443:8443`).
+- The image's `HEALTHCHECK` follows it: it connects to `listen_address`, or to `127.0.0.1` when
+  the bridge listens on every interface (unset, `0.0.0.0`, `::`).
 
 #### Use HTTPS on every hop
 
@@ -193,6 +211,7 @@ for example `clients[1].id: duplicate client id "my-app"`), and refuses to start
 - an `issuer` that isn't `https://` (only `http://localhost` is accepted)
 - a `cookie_secret_file` with fewer than 32 bytes, or a `signing_key_file` that isn't a PEM RSA
   private key
+- a `listen_address` that isn't an IP address (a host name, `[::1]`, a port, a zone id)
 - a `trusted_proxies` entry that isn't an IP address or CIDR range
 - upstream `scopes` without `openid`
 - no clients, a duplicate client id, a client without redirect URIs
@@ -211,7 +230,7 @@ for example `clients[1].id: duplicate client id "my-app"`), and refuses to start
 
 Targets belong to a client, so each app has its own set of accounts that may be impersonated.
 
-Defaults: `port` 8080, `trusted_proxies` empty, `access_token_ttl` `10m`, `store.key_prefix`
+Defaults: `port` 8080, `listen_address` unset (every interface), `trusted_proxies` empty, `access_token_ttl` `10m`, `store.key_prefix`
 `oidc-impersonation:`, upstream `scopes` `[openid, profile, email]`, `groups_claim` `groups`,
 `token_endpoint_auth_method` `client_secret_basic`, `selectable_redirect_uris` empty, `targets`
 empty, `session_ttl` `8h`.
@@ -219,6 +238,7 @@ empty, `session_ttl` `8h`.
 ```yaml
 issuer: https://id.example.org          # public URL of the bridge
 port: 8080
+# listen_address: 127.0.0.1             # optional: 1 IP address to listen on; omit = every interface
 tls:                                    # optional but strongly recommended; omit for plain HTTP
   cert_file: /run/secrets/tls.crt       # PEM, full chain
   key_file: /run/secrets/tls.key        # PEM

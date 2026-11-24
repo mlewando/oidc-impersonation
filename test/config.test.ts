@@ -277,6 +277,30 @@ describe('parseConfig', () => {
     expect(await errorsOf((raw) => (raw.port = port))).toEqual([expect.stringMatching(/^port: /)]);
   });
 
+  describe('listen_address', () => {
+    it('listens on every interface when omitted', async () => {
+      const result = await parseWith(() => {});
+      if (!result.ok) throw new Error(result.errors.join('\n'));
+      expect(result.config.listenAddress).toBeUndefined();
+    });
+
+    it.each(['127.0.0.1', '::1', '0.0.0.0', '::', '10.0.0.5', '2001:db8::1'])('accepts %s', async (address) => {
+      const result = await parseWith((raw) => (raw.listen_address = address));
+      if (!result.ok) throw new Error(result.errors.join('\n'));
+      expect(result.config.listenAddress).toBe(address);
+    });
+
+    it.each(['localhost', '[::1]', '127.0.0.1:8080', 'fe80::1%eth0', '', null, 127])('rejects %j', async (address) => {
+      expect(await errorsOf((raw) => (raw.listen_address = address))).toEqual([expect.stringMatching(/^listen_address: /)]);
+    });
+
+    it('says a hostname is not an IP address', async () => {
+      expect(await errorsOf((raw) => (raw.listen_address = 'localhost'))).toEqual([
+        'listen_address: must be an IP address (e.g. 127.0.0.1, ::1), not a hostname',
+      ]);
+    });
+  });
+
   it('rejects a cookie secret shorter than 32 bytes', async () => {
     files['/s/short-cookie'] = 'x'.repeat(31);
     expect(await errorsOf((raw) => (raw.cookie_secret_file = '/s/short-cookie'))).toEqual([

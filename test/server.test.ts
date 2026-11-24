@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -150,6 +150,44 @@ describe('without tls', () => {
   });
 });
 
+describe('listen_address', () => {
+  it('binds only that address and names it in the log and url', async () => {
+    const logs: string[] = [];
+    running = await startServer(baseConfig({ listenAddress: '127.0.0.1' }), baseDeps({ log: (l) => logs.push(l) }));
+
+    expect(running.url).toBe(`http://127.0.0.1:${running.port}`);
+    expect(logs.join('\n')).toContain(`listening on 127.0.0.1:${running.port} as`);
+    expect([200, 503]).toContain((await healthz(running)).status); // reachable, ready or not
+
+    const elsewhere = Object.values(networkInterfaces())
+      .flat()
+      .find((a) => a?.family === 'IPv4' && !a.internal);
+    if (elsewhere) {
+      await expect(fetch(`http://${elsewhere.address}:${running.port}/healthz`)).rejects.toThrow();
+    }
+  });
+
+  it('keeps the old log line when unset', async () => {
+    const logs: string[] = [];
+    running = await startServer(baseConfig(), baseDeps({ log: (l) => logs.push(l) }));
+    expect(logs.join('\n')).toContain(`listening on :${running.port} as`);
+    expect(running.url).toBe(`http://localhost:${running.port}`);
+  });
+
+  it('does not start when the address is not on this host', async () => {
+    await expect(startServer(baseConfig({ listenAddress: '192.0.2.1', port: 8080 }), baseDeps())).rejects.toThrow(
+      /^cannot listen on 192\.0\.2\.1:8080: .*EADDRNOTAVAIL/,
+    );
+  });
+
+  it('does not start when the port is taken', async () => {
+    running = await startServer(baseConfig({ listenAddress: '127.0.0.1' }), baseDeps());
+    await expect(
+      startServer(baseConfig({ listenAddress: '127.0.0.1', port: running.port }), baseDeps()),
+    ).rejects.toThrow(new RegExp(`^cannot listen on 127\\.0\\.0\\.1:${running.port}: .*EADDRINUSE`));
+  });
+});
+
 describe('with tls', () => {
   function selfSigned(dir: string, name: string) {
     execFileSync('openssl', [
@@ -198,6 +236,28 @@ describe('with tls', () => {
     await rename(`${certFile}.new`, certFile);
 
     await until(async () => (await servedCertificateCn(running!.port)) === 'CN=second');
+  });
+
+  it('stops watching the certificate files when the address cannot be bound', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oidc-impersonation-tls-'));
+    selfSigned(dir, 'good');
+    const certFile = join(dir, 'good.crt');
+    const keyFile = join(dir, 'good.key');
+    const watchers = () => process.getActiveResourcesInfo().filter((r) => r === 'StatWatcher').length;
+    const before = watchers();
+
+    await expect(
+      startServer(
+        baseConfig({
+          issuer: 'https://localhost:0',
+          listenAddress: '192.0.2.1',
+          tls: { certFile, keyFile, cert: await readFile(certFile, 'utf8'), key: await readFile(keyFile, 'utf8') },
+        }),
+        baseDeps({ tlsPollMs: 20 }),
+      ),
+    ).rejects.toThrow(/EADDRNOTAVAIL/);
+
+    expect(watchers()).toBe(before);
   });
 
   it('keeps serving the old certificate when the new files are broken', async () => {

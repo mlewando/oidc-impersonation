@@ -1,6 +1,7 @@
 import { jsonLinesAuditSink } from './audit.ts';
 import { ConfigError, loadConfig, type BridgeConfig } from './config.ts';
-import { startServer } from './server.ts';
+import { errorMessage } from './errors.ts';
+import { startServer, type RunningServer } from './server.ts';
 import { valkeyStore } from './valkey-store.ts';
 import { discoverUpstream } from './upstream.ts';
 
@@ -19,12 +20,19 @@ try {
 }
 
 const store = valkeyStore(config.store);
-const server = await startServer(config, {
-  discover: () => discoverUpstream(config),
-  audit: jsonLinesAuditSink(),
-  store,
-  log: (line) => console.error(line),
-});
+let server: RunningServer;
+try {
+  server = await startServer(config, {
+    discover: () => discoverUpstream(config),
+    audit: jsonLinesAuditSink(),
+    store,
+    log: (line) => console.error(line),
+  });
+} catch (error) {
+  // A port or address that cannot be bound is an operator error: 1 line, not a stack trace.
+  console.error(errorMessage(error));
+  process.exit(1);
+}
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {

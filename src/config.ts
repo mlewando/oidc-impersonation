@@ -32,6 +32,8 @@ export interface TargetConfig {
 export interface BridgeConfig {
   issuer: string;
   port: number;
+  /** The one IP address to listen on; unset = all interfaces. */
+  listenAddress?: string;
   tls?: { certFile: string; keyFile: string; cert: string; key: string };
   trustedProxies: string[];
   signingKeyPem: string;
@@ -69,6 +71,7 @@ export interface HealthzConfig {
 /** The part of the config the container healthcheck needs. */
 export interface ProbeConfig {
   port: number;
+  listenAddress?: string;
   tls: boolean;
   healthz: HealthzConfig;
 }
@@ -95,6 +98,28 @@ function secretFile(readFile: ReadFile, opts: { trim: boolean }) {
 }
 
 const port = z.number().int().min(1).max(65535).default(8080);
+
+// An IP literal only: `localhost` can resolve to a family the Bridge is not bound to, so the
+// healthcheck (which derives its target from this address) and the server could disagree.
+// `isIP` accepts a zone id (`fe80::1%eth0`), which is not a plain address.
+const listenAddress = z
+  .string()
+  .refine((a) => isIP(a) !== 0 && !a.includes('%'), 'must be an IP address (e.g. 127.0.0.1, ::1), not a hostname')
+  .optional();
+
+/** An IP address as it is written inside a URL: IPv6 canonical and in brackets. */
+export function urlHost(address: string): string {
+  return isIP(address) === 6 ? new URL(`http://[${address}]`).hostname : address;
+}
+
+/**
+ * Where the container healthcheck connects: the listen address, or the IPv4 loopback when the
+ * Bridge listens on every interface (unset, `0.0.0.0`, `::` and their other spellings).
+ */
+export function probeHost(address: string | undefined): string {
+  const host = address === undefined ? '0.0.0.0' : urlHost(address);
+  return host === '0.0.0.0' || host === '[::]' ? '127.0.0.1' : host;
+}
 
 function healthzSchema(readFile: ReadFile) {
   return z
@@ -170,6 +195,7 @@ function buildSchema(readFile: ReadFile) {
     .strictObject({
       issuer: z.string().refine(isAllowedIssuer, 'must be an https:// URL (http:// only for localhost)'),
       port,
+      listen_address: listenAddress,
       tls: tls.optional(),
       trusted_proxies: z.array(z.string().refine(isIpOrCidr, 'must be an IP address or CIDR range')).default([]),
       signing_key_file: secret({ trim: false }).refine(isRsaPrivateKey, 'must be a PEM RSA private key'),
@@ -211,6 +237,7 @@ function buildSchema(readFile: ReadFile) {
       (raw): BridgeConfig => ({
         issuer: raw.issuer,
         port: raw.port,
+        ...(raw.listen_address !== undefined && { listenAddress: raw.listen_address }),
         ...(raw.tls && { tls: raw.tls }),
         trustedProxies: raw.trusted_proxies,
         signingKeyPem: raw.signing_key_file,
@@ -262,18 +289,29 @@ export async function loadConfig(path: string): Promise<BridgeConfig> {
 }
 
 /**
- * Reads only what the container healthcheck needs (port, whether TLS is on, `/healthz`
- * credentials), with the same rules as the full config. It reads no other secret file, so a
+ * Reads only what the container healthcheck needs (port, listen address, whether TLS is on,
+ * `/healthz` credentials), with the same rules as the full config. It reads no other secret file, so a
  * rotating signing key or client secret can't make a running Bridge look unhealthy.
  */
 export async function loadProbeConfig(path: string): Promise<ProbeConfig> {
   const readFile: ReadFile = (p) => fsReadFile(p, 'utf8');
-  const schema = z.object({ port, tls: z.unknown().optional(), healthz: healthzSchema(readFile) });
+  const schema = z.object({
+    port,
+    listen_address: listenAddress,
+    tls: z.unknown().optional(),
+    healthz: healthzSchema(readFile),
+  });
   const parsed = await schema.safeParseAsync(parse(await readFile(path)));
   if (!parsed.success) {
     throw new ConfigError(path, parsed.error.issues.map((i) => `${formatPath(i.path)}: ${i.message}`));
   }
-  return { port: parsed.data.port, tls: parsed.data.tls !== undefined, healthz: parsed.data.healthz };
+  const { listen_address } = parsed.data;
+  return {
+    port: parsed.data.port,
+    ...(listen_address !== undefined && { listenAddress: listen_address }),
+    tls: parsed.data.tls !== undefined,
+    healthz: parsed.data.healthz,
+  };
 }
 
 export class ConfigError extends Error {

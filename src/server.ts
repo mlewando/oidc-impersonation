@@ -6,7 +6,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import type { AuditSink } from './audit.ts';
 import { createBridge, type Bridge } from './bridge.ts';
-import type { BridgeConfig } from './config.ts';
+import { probeHost, urlHost, type BridgeConfig } from './config.ts';
 import { errorMessage } from './errors.ts';
 import type { Store } from './store.ts';
 import type { Upstream } from './upstream.ts';
@@ -92,13 +92,29 @@ export async function startServer(config: BridgeConfig, deps: ServerDeps): Promi
     );
   }
 
-  await new Promise<void>((resolve) => server.listen(config.port, resolve));
+  // No host = every interface (Node: `::`, or `0.0.0.0` without IPv6). An explicit address is
+  // never widened: if it cannot be bound, the Bridge does not start.
+  const listening = (port: number) => `${config.listenAddress ? urlHost(config.listenAddress) : ''}:${port}`;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ port: config.port, host: config.listenAddress }, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+  } catch (error) {
+    stopWatching();
+    throw new Error(`cannot listen on ${listening(config.port)}: ${errorMessage(error)}`);
+  }
   const { port } = server.address() as AddressInfo;
-  deps.log(`oidc-impersonation listening on :${port} as ${config.issuer}`);
+  deps.log(`oidc-impersonation listening on ${listening(port)} as ${config.issuer}`);
   void start();
 
+  // `localhost` may resolve to a family the Bridge is not bound to, so name the address itself.
+  const host = config.listenAddress ? probeHost(config.listenAddress) : 'localhost';
   return {
-    url: `${tls ? 'https' : 'http'}://localhost:${port}`,
+    url: `${tls ? 'https' : 'http'}://${host}:${port}`,
     port,
     async close() {
       stopped = true;
